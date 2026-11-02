@@ -66,6 +66,7 @@ impl App {
         let source = loading.show.source.clone();
         let output = self.screens[index].name.clone();
         self.present(index, Picture::Video(source.clone()), loading);
+        self.restyle(index);
         let Some(video) = self.videos.get_mut(&source) else {
             return;
         };

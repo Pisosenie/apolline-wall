@@ -62,7 +62,7 @@ impl App {
             frame: 0,
             timer: false,
         };
-        if let Err(message) = advance(&self.gl, self.fps, self.accent, &mut scene) {
+        if let Err(message) = advance(&self.gl, self.fps, self.accent, 1.0, &mut scene) {
             self.drop_scene(scene);
             return Err(message);
         }
@@ -143,11 +143,14 @@ impl App {
         let paused = self.is_paused(&self.screens[index].name);
         let (fps, accent) = (self.fps, self.accent);
         let screen = &mut self.screens[index];
-        let Some(Picture::Shader(scene)) = screen.shown.as_mut().map(|shown| &mut shown.picture)
-        else {
+        let Some(shown) = screen.shown.as_mut() else {
             return;
         };
-        let result = advance(&self.gl, fps, accent, scene);
+        let speed = shown.show.look.unwrap_or_default().speed;
+        let Picture::Shader(scene) = &mut shown.picture else {
+            return;
+        };
+        let result = advance(&self.gl, fps, accent, speed, scene);
         if paused {
             scene.last = None;
         }
@@ -245,12 +248,18 @@ impl App {
     }
 }
 
-fn advance(gl: &Gl, fps: u32, accent: [f32; 3], scene: &mut Scene) -> Result<(), String> {
+fn advance(
+    gl: &Gl,
+    fps: u32,
+    accent: [f32; 3],
+    speed: f32,
+    scene: &mut Scene,
+) -> Result<(), String> {
     let now = Instant::now();
     let delta = scene
         .last
         .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
-    scene.time += delta;
+    scene.time += delta * speed;
     scene.last = Some(now);
     let inputs = gl::Inputs {
         time: scene.time,

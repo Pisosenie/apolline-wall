@@ -24,6 +24,8 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
   - A now-playing bar with pause, and settings for folders and shader limits.
   - Wallpaper Engine videos play. Scenes, web and application wallpapers are listed with the reason they can't be set yet.
   - If the daemon isn't running, the app says so and starts it.
+- Looks: brightness, contrast, saturation and a mirror for anything, drawn in the final shader so they cost nothing, and speed for videos (mpv) and shaders (their clock). A live draft on the desktop with Apply and Revert, remembered per wallpaper and per monitor.
+- A tray (StatusNotifierItem): pause, resume and random per monitor, and the window. It waits for the bar at login, and starts through XDG autostart from Settings. Every client gets a fresh status after a change, so the tray and the window agree.
 - The Steam Workshop tab:
   - It browses without an account: Steam Community's browse page for the list, `GetPublishedFileDetails` for the details. Videos, scenes or everything; trending, newest or most subscribed; search.
   - Ratings: Questionable is off by default, Mature never shows.
@@ -42,12 +44,9 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - The content stays its authors'. Nothing is redistributed.
 
 ### 2. Properties and the rest of the app
-- A wallpaper's own properties as controls: Wallpaper Engine's `general.properties` and ours from `wallpaper.toml`.
-  - Edits are a draft that shows live on the desktop. Apply keeps them, Revert goes back.
-  - Named presets, exported and imported.
-- Video adjustments mapped to mpv: speed, brightness, saturation, flip. `fit: "blur"` fills mismatched edges with a blurred copy.
-- Favorites and collections. Monitors picked on a drawing of their layout.
-- A tray icon (StatusNotifierItem): pause, mute, previous, next and random per monitor, and open the app. The app keeps running in the tray when its window closes.
+- A wallpaper's own properties as controls: Wallpaper Engine's `general.properties` and ours from `wallpaper.toml`, with named presets exported and imported.
+- `fit: "blur"` fills mismatched edges with a blurred copy.
+- Favorites and collections. Monitors picked on a drawing of their layout. Previous and next in the tray once playlists exist.
 - "Not working? Report it" on a wallpaper, with a diagnostics file that has home paths and user names removed.
 
 ### 3. Every desktop

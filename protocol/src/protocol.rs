@@ -21,6 +21,7 @@ pub enum Command {
     Pause(Pause),
     Limits(Limits),
     Uniforms(Uniforms),
+    Adjust(Adjust),
     /// Answered with a `status` event to whoever asked.
     Status {},
 }
@@ -35,6 +36,66 @@ pub struct Show {
     pub fit: Fit,
     #[serde(default = "default_transition")]
     pub transition_ms: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
+}
+
+/// How a wallpaper looks on top of what its file holds: tone, mirroring and pace.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Look {
+    /// -1 to 1; 0 leaves it.
+    pub brightness: f32,
+    /// 0 to 2; 1 leaves it.
+    pub contrast: f32,
+    /// 0 to 2; 1 leaves it, 0 is grey.
+    pub saturation: f32,
+    pub flip: bool,
+    /// 0.1 to 4, for videos and shaders.
+    pub speed: f32,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look {
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            flip: false,
+            speed: 1.0,
+        }
+    }
+}
+
+impl Look {
+    pub fn is_plain(&self) -> bool {
+        *self == Look::default()
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let within = |value: f32, low: f32, high: f32, name: &str| {
+            if (low..=high).contains(&value) {
+                Ok(())
+            } else {
+                Err(format!("{name} {value} is outside {low}..{high}"))
+            }
+        };
+        within(self.brightness, -1.0, 1.0, "brightness")?;
+        within(self.contrast, 0.0, 2.0, "contrast")?;
+        within(self.saturation, 0.0, 2.0, "saturation")?;
+        within(self.speed, 0.1, 4.0, "speed")
+    }
+}
+
+/// Changes the look of what monitors show now. A draft shows at once but isn't remembered.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Adjust {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    pub look: Look,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub draft: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -129,6 +190,8 @@ pub struct Monitor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<PathBuf>,
     pub paused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
 }
 
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -142,6 +205,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
         }) if !(0.1..=1.0).contains(scale) => {
             Err(format!("scale {scale} is outside 0.1..1 in {line}"))
         }
+        Command::Show(Show {
+            look: Some(look), ..
+        })
+        | Command::Adjust(Adjust { look, .. }) => look
+            .check()
+            .map(|()| command.clone())
+            .map_err(|problem| format!("{problem} in {line}")),
         _ => Ok(command),
     }
 }
@@ -191,6 +261,7 @@ mod tests {
                 source: "/w/fog.jpg".into(),
                 fit: Fit::Cover,
                 transition_ms: 400,
+                look: None,
             }))
         );
         assert_eq!(
@@ -202,6 +273,7 @@ mod tests {
                 source: "/w/a.png".into(),
                 fit: Fit::Contain,
                 transition_ms: 0,
+                look: None,
             }))
         );
     }
@@ -248,6 +320,31 @@ mod tests {
     }
 
     #[test]
+    fn a_look_fills_in_what_it_leaves_out_and_stays_in_range() {
+        let Ok(Command::Adjust(adjust)) =
+            parse(r#"{"adjust":{"look":{"saturation":0.2},"draft":true}}"#)
+        else {
+            panic!("an adjust")
+        };
+        assert_eq!(
+            adjust.look,
+            Look {
+                saturation: 0.2,
+                ..Look::default()
+            }
+        );
+        assert!(adjust.draft && adjust.output.is_none());
+        assert!(Look::default().is_plain());
+        assert!(
+            parse(r#"{"adjust":{"look":{"speed":9}}}"#)
+                .unwrap_err()
+                .contains("speed 9")
+        );
+        assert!(parse(r#"{"show":{"source":"/w/a.jpg","look":{"brightness":-2}}}"#).is_err());
+        assert!(parse(r#"{"adjust":{"look":{"glow":1}}}"#).is_err());
+    }
+
+    #[test]
     fn commands_survive_the_trip_through_json() {
         for command in [
             Command::Show(Show {
@@ -255,6 +352,15 @@ mod tests {
                 source: "/w/fog.jpg".into(),
                 fit: Fit::Contain,
                 transition_ms: 0,
+                look: Some(Look {
+                    flip: true,
+                    ..Look::default()
+                }),
+            }),
+            Command::Adjust(Adjust {
+                output: None,
+                look: Look::default(),
+                draft: false,
             }),
             Command::Pause(Pause {
                 output: None,

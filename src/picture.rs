@@ -5,7 +5,7 @@ use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer
 use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
 use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, RgbaImage};
 
-use crate::protocol::Fit;
+use crate::protocol::{Fit, Look};
 
 pub struct Source {
     image: RgbaImage,
@@ -116,6 +116,15 @@ pub const WHOLE: Uv = [1.0, 1.0, 0.0, 0.0];
 /// What GL renders lands bottom row first.
 pub const UPSIDE_DOWN: Uv = [1.0, -1.0, 0.0, 1.0];
 
+/// The same placement seen in a mirror.
+pub fn flipped([x, y, dx, dy]: Uv) -> Uv {
+    [-x, y, 1.0 - dx, dy]
+}
+
+pub fn tone(look: &Look) -> [f32; 4] {
+    [look.brightness, look.contrast, look.saturation, 0.0]
+}
+
 pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
     let ratio = (tw as f32 / th as f32) / (sw as f32 / sh as f32);
     let (x, y) = match fit {
@@ -175,6 +184,15 @@ mod tests {
         let [x, y, dx, dy] = placement(Fit::Contain, wide, laptop);
         assert!(x == 1.0 && (y - 1.0 / 0.9).abs() < 1e-4 && dx == 0.0 && dy < 0.0);
         assert_eq!(placement(Fit::Cover, laptop, laptop), WHOLE);
+    }
+
+    #[test]
+    fn a_mirror_reads_the_row_backwards() {
+        let mirrored = flipped(WHOLE);
+        let read = |uv: Uv, x: f32| x * uv[0] + uv[2];
+        assert_eq!((read(mirrored, 0.0), read(mirrored, 1.0)), (1.0, 0.0));
+        assert_eq!(flipped(flipped(UPSIDE_DOWN)), UPSIDE_DOWN);
+        assert_eq!(tone(&Look::default()), [0.0, 1.0, 1.0, 0.0]);
     }
 
     #[test]

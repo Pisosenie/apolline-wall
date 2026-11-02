@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use apolline_wall_protocol::protocol::Look;
 use serde::{Deserialize, Serialize};
 
 /// The app's own settings; what each monitor shows belongs to the daemon.
@@ -11,6 +13,19 @@ pub struct Config {
     /// Workshop items rated Questionable; Mature ones are never shown.
     #[serde(default)]
     pub questionable: bool,
+    /// How each wallpaper should look, by its path; plain ones aren't listed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub looks: BTreeMap<String, Look>,
+}
+
+impl Config {
+    /// The usual places, then the ones added in Settings.
+    pub fn all_folders(&self) -> Vec<PathBuf> {
+        defaults()
+            .into_iter()
+            .chain(self.folders.iter().cloned())
+            .collect()
+    }
 }
 
 pub fn home() -> PathBuf {
@@ -44,6 +59,37 @@ pub fn defaults() -> Vec<PathBuf> {
         data.join("apolline-wall/wallpapers"),
         PathBuf::from("/usr/share/apolline-wall/wallpapers"),
     ]
+}
+
+/// The XDG autostart entry that brings the tray up at login.
+fn autostart() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".config"))
+        .join("autostart/apolline-wallpapers-tray.desktop")
+}
+
+pub fn tray_at_login() -> bool {
+    autostart().is_file()
+}
+
+pub fn set_tray_at_login(on: bool) -> Result<(), String> {
+    let path = autostart();
+    let fail = |err: std::io::Error| format!("{}: {err}", path.display());
+    if !on {
+        return match std::fs::remove_file(&path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(fail(err)),
+            _ => Ok(()),
+        };
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    std::fs::write(
+        &path,
+        "[Desktop Entry]\nType=Application\nName=Wallpapers in the tray\nExec=apolline-wallpapers --tray\nIcon=preferences-desktop-wallpaper\nNoDisplay=true\n",
+    )
+    .map_err(fail)
 }
 
 pub fn expand(text: &str) -> PathBuf {

@@ -13,12 +13,15 @@ path = "src/main.rs"
 [dependencies]
 apolline-wall-protocol = { path = "../protocol" }
 iced = { version = "0.14", features = ["image", "tokio"] }
-tokio = { version = "1", features = ["net", "io-util", "time", "rt", "process"] }
+tokio = { version = "1", features = ["net", "io-util", "time", "rt", "rt-multi-thread", "process", "sync"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 ureq = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

@@ -17,7 +17,8 @@ use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
 
-use crate::picture::{Pixels, Uv};
+use crate::picture::{self, Pixels, Uv};
+use crate::protocol::Look;
 
 pub use glow::Texture;
 pub use shader::{Inputs, Shader};
@@ -36,18 +37,25 @@ uniform sampler2D before;
 uniform sampler2D after;
 uniform vec4 before_uv;
 uniform vec4 after_uv;
+uniform vec4 before_tone;
+uniform vec4 after_tone;
 uniform float progress;
 in vec2 uv;
 out vec4 color;
-vec3 pick(sampler2D picture, vec4 placement) {
+// tone: brightness, contrast around mid-grey, saturation.
+vec3 pick(sampler2D picture, vec4 placement, vec4 tone) {
     vec2 p = uv * placement.xy + placement.zw;
     if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) {
         return vec3(0.0);
     }
-    return texture(picture, p).rgb;
+    vec3 c = (texture(picture, p).rgb - 0.5) * tone.y + 0.5 + tone.x;
+    float grey = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    return clamp(mix(vec3(grey), c, tone.z), 0.0, 1.0);
 }
 void main() {
-    color = vec4(mix(pick(before, before_uv), pick(after, after_uv), progress), 1.0);
+    vec3 a = pick(before, before_uv, before_tone);
+    vec3 b = pick(after, after_uv, after_tone);
+    color = vec4(mix(a, b, progress), 1.0);
 }";
 
 pub struct Gl {
@@ -64,6 +72,8 @@ struct Program {
     vao: glow::VertexArray,
     before_uv: glow::UniformLocation,
     after_uv: glow::UniformLocation,
+    before_tone: glow::UniformLocation,
+    after_tone: glow::UniformLocation,
     progress: glow::UniformLocation,
 }
 
@@ -82,6 +92,18 @@ impl Target {
 pub struct Layer {
     pub texture: Texture,
     pub uv: Uv,
+    pub tone: [f32; 4],
+}
+
+impl Layer {
+    pub fn new(texture: Texture, uv: Uv, look: Option<Look>) -> Self {
+        let look = look.unwrap_or_default();
+        Layer {
+            texture,
+            uv: if look.flip { picture::flipped(uv) } else { uv },
+            tone: picture::tone(&look),
+        }
+    }
 }
 
 pub struct Canvas {
@@ -264,6 +286,8 @@ impl Gl {
             }
             gl.uniform_4_f32_slice(Some(&program.before_uv), &before.uv);
             gl.uniform_4_f32_slice(Some(&program.after_uv), &after.uv);
+            gl.uniform_4_f32_slice(Some(&program.before_tone), &before.tone);
+            gl.uniform_4_f32_slice(Some(&program.after_tone), &after.tone);
             gl.uniform_1_f32(Some(&program.progress), progress);
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
@@ -367,6 +391,8 @@ unsafe fn program(gl: &glow::Context) -> Result<Program, String> {
             vao: gl.create_vertex_array()?,
             before_uv: uniform("before_uv")?,
             after_uv: uniform("after_uv")?,
+            before_tone: uniform("before_tone")?,
+            after_tone: uniform("after_tone")?,
             progress: uniform("progress")?,
         })
     }

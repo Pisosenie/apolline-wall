@@ -154,6 +154,7 @@ fn set(options: &Options) -> Result<(), String> {
             source: source.clone(),
             fit,
             transition_ms: options.number("transition")?.unwrap_or(400),
+            look: None,
         }),
     )?;
     let mut failed = Vec::new();
@@ -255,6 +256,7 @@ fn describe(status: &Event) -> String {
         name,
         source,
         paused,
+        ..
     } in outputs
     {
         let shown = source.as_deref().map_or("nothing".to_owned(), |path| {
@@ -317,11 +319,13 @@ mod tests {
                     name: "DP-1".into(),
                     source: Some("/w/fog.jpg".into()),
                     paused: false,
+                    look: None,
                 },
                 Monitor {
                     name: "HDMI-A-1".into(),
                     source: None,
                     paused: true,
+                    look: None,
                 },
             ],
             fps: 30,

@@ -106,6 +106,7 @@ impl App {
             Shop::Set(id) => match self.downloaded(&id) {
                 Some(source) => self.ask(Command::Show(Show {
                     output: self.target.clone(),
+                    look: Some(self.saved_look(&source)).filter(|look| !look.is_plain()),
                     source,
                     fit: self.fit,
                     transition_ms: 600,

@@ -222,6 +222,11 @@ impl Player {
         unsafe { (self.mpv.set_property_string)(self.handle, c("pause").as_ptr(), value.as_ptr()) };
     }
 
+    pub fn set_speed(&self, speed: f32) {
+        let value = c(&format!("{speed}"));
+        unsafe { (self.mpv.set_property_string)(self.handle, c("speed").as_ptr(), value.as_ptr()) };
+    }
+
     pub fn has_frame(&self) -> bool {
         unsafe { (self.mpv.render_update)(self.render) & UPDATE_FRAME != 0 }
     }

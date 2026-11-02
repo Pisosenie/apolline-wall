@@ -21,28 +21,54 @@ pub fn watch() -> Subscription<Update> {
 }
 
 fn listen() -> impl Stream<Item = Update> {
-    iced::stream::channel(32, async |mut output| {
-        loop {
-            if let Ok(stream) = UnixStream::connect(protocol::socket_path()).await {
-                let (read, mut write) = stream.into_split();
-                let status = format!("{}\n", protocol::line(&Command::Status {}));
-                if write.write_all(status.as_bytes()).await.is_ok() {
-                    let mut lines = BufReader::new(read).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        if let Ok(event) = serde_json::from_str::<Event>(&line)
-                            && output.send(Update::Event(event)).await.is_err()
-                        {
-                            return;
-                        }
+    iced::stream::channel(32, async |output| {
+        follow(|update| {
+            let mut output = output.clone();
+            async move { output.send(update).await.is_ok() }
+        })
+        .await
+    })
+}
+
+/// Hands every update to `deliver` until it answers false: the daemon's status and events
+/// while it runs, `Gone` when it stops, and a new look for it every two seconds after.
+pub async fn follow<F, Fut>(mut deliver: F)
+where
+    F: FnMut(Update) -> Fut,
+    Fut: Future<Output = bool>,
+{
+    loop {
+        if let Ok(stream) = UnixStream::connect(protocol::socket_path()).await {
+            let (read, mut write) = stream.into_split();
+            let status = format!("{}\n", protocol::line(&Command::Status {}));
+            if write.write_all(status.as_bytes()).await.is_ok() {
+                let mut lines = BufReader::new(read).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(event) = serde_json::from_str::<Event>(&line)
+                        && !deliver(Update::Event(event)).await
+                    {
+                        return;
                     }
                 }
             }
-            if output.send(Update::Gone).await.is_err() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_secs(2)).await;
         }
-    })
+        if !deliver(Update::Gone).await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+/// Sends a command without waiting for anything back, for changes made while dragging.
+pub async fn send(command: Command) -> Result<(), String> {
+    let mut stream = UnixStream::connect(protocol::socket_path())
+        .await
+        .map_err(|_| NOT_RUNNING.to_owned())?;
+    let line = format!("{}\n", protocol::line(&command));
+    stream
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|err| err.to_string())
 }
 
 /// Sends a command and answers with the daemon's status after it, or with why it couldn't.

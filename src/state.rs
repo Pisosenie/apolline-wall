@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{self, Command, Fit, Limits, Show, Uniforms};
+use crate::protocol::{self, Adjust, Command, Fit, Limits, Look, Show, Uniforms};
 
 /// What a login comes back to when the daemon runs on its own.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -27,6 +27,18 @@ pub struct Saved {
     pub source: PathBuf,
     #[serde(default)]
     pub fit: Fit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
+}
+
+impl Saved {
+    fn of(show: &Show) -> Self {
+        Saved {
+            source: show.source.clone(),
+            fit: show.fit,
+            look: show.look.filter(|look| !look.is_plain()),
+        }
+    }
 }
 
 impl State {
@@ -34,10 +46,7 @@ impl State {
     pub fn record(&mut self, command: &Command) -> bool {
         match command {
             Command::Show(show) => {
-                let saved = Saved {
-                    source: show.source.clone(),
-                    fit: show.fit,
-                };
+                let saved = Saved::of(show);
                 match &show.output {
                     None => {
                         self.outputs.clear();
@@ -60,16 +69,36 @@ impl State {
                 self.accent = Some(hex(*accent));
                 true
             }
+            Command::Adjust(Adjust { draft: true, .. }) => false,
+            Command::Adjust(Adjust { output, look, .. }) => {
+                let look = Some(*look).filter(|look| !look.is_plain());
+                match output {
+                    None => {
+                        for saved in self.wallpaper.iter_mut().chain(self.outputs.values_mut()) {
+                            saved.look = look;
+                        }
+                    }
+                    Some(name) => match (self.outputs.get_mut(name), &self.wallpaper) {
+                        (Some(saved), _) => saved.look = look,
+                        (None, Some(default)) => {
+                            let saved = Saved {
+                                look,
+                                ..default.clone()
+                            };
+                            self.outputs.insert(name.clone(), saved);
+                        }
+                        (None, None) => return false,
+                    },
+                }
+                true
+            }
             Command::Uniforms(_) | Command::Pause(_) | Command::Status {} => false,
         }
     }
 
     /// Marks a wallpaper as one that has shown, so a later failure can fall back to it.
     pub fn keep(&mut self, show: &Show) {
-        let saved = Saved {
-            source: show.source.clone(),
-            fit: show.fit,
-        };
+        let saved = Saved::of(show);
         match &show.output {
             None => self.wallpaper = Some(saved),
             Some(name) => {
@@ -116,6 +145,7 @@ impl State {
                 source: saved.source.clone(),
                 fit: saved.fit,
                 transition_ms: 0,
+                look: saved.look,
             })
         };
         commands.extend(self.wallpaper.iter().map(|saved| show(None, saved)));
@@ -170,6 +200,7 @@ mod tests {
             source: source.into(),
             fit: Fit::Cover,
             transition_ms: 400,
+            look: None,
         })
     }
 
@@ -230,6 +261,33 @@ mod tests {
         state.record(&odd);
         assert!(state.undo(odd_show, &good));
         assert!(state.outputs.is_empty());
+    }
+
+    #[test]
+    fn a_saved_look_follows_its_monitor_and_drafts_are_forgotten() {
+        let mut state = State::default();
+        state.record(&show(None, "/w/fog.jpg"));
+        let dim = Look {
+            brightness: -0.3,
+            ..Look::default()
+        };
+        let adjust = |output: Option<&str>, draft| {
+            Command::Adjust(Adjust {
+                output: output.map(Into::into),
+                look: dim,
+                draft,
+            })
+        };
+        assert!(!state.record(&adjust(None, true)));
+        assert_eq!(state.wallpaper.as_ref().unwrap().look, None);
+        assert!(state.record(&adjust(Some("DP-1"), false)));
+        assert_eq!(state.outputs["DP-1"].look, Some(dim));
+        assert_eq!(state.outputs["DP-1"].source, Path::new("/w/fog.jpg"));
+        assert_eq!(state.wallpaper.as_ref().unwrap().look, None);
+        let Command::Show(replayed) = &state.commands()[1] else {
+            panic!()
+        };
+        assert_eq!(replayed.look, Some(dim));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+mod look;
 mod shop;
 
 use apolline_wall_protocol::protocol::Fit;
@@ -277,6 +278,9 @@ fn inspector(app: &App) -> Element<'_, Message> {
             ),
         ));
     }
+    if item.what.missing().is_none() {
+        details = details.push(section("Look", look::editor(app, item)));
+    }
     let mut apply =
         button(container(text("Set as wallpaper").size(14).font(style::medium())).center_x(Fill))
             .padding([11, 16])
@@ -285,15 +289,19 @@ fn inspector(app: &App) -> Element<'_, Message> {
     if app.daemon.is_some() && item.what.missing().is_none() {
         apply = apply.on_press(Message::Apply);
     }
-    details = details.push(space::vertical());
+    let mut bottom = column![].spacing(10);
     if let Some(missing) = item.what.missing() {
-        details = details.push(text(missing).size(12).color(style::SOFT));
+        bottom = bottom.push(text(missing).size(12).color(style::SOFT));
     }
-    details = details.push(apply);
+    bottom = bottom.push(apply);
     if let Some(notice) = &app.notice {
-        details = details.push(notice_line(notice));
+        bottom = bottom.push(notice_line(notice));
     }
-    container(details)
+    let details = scrollable(container(details).padding(iced::padding::right(8)))
+        .direction(style::thin())
+        .style(style::scroller)
+        .height(Fill);
+    container(column![details, bottom].spacing(14))
         .padding(16)
         .width(INSPECTOR)
         .height(Fill)
@@ -458,6 +466,26 @@ fn settings(app: &App) -> Element<'_, Message> {
                     .size(22)
                     .style(style::switch),
             ]
+            .align_y(Alignment::Center)
+            .into()
+        ),
+        section(
+            "Tray",
+            row![
+                column![
+                    text("Show Wallpapers in the tray at login").size(14),
+                    text("Pause, resume or pick a random wallpaper for each monitor without the window. Through XDG autostart; on niri or Hyprland add `apolline-wallpapers --tray` to your startup instead.")
+                        .size(12)
+                        .color(style::FAINT),
+                ]
+                .spacing(3)
+                .width(Fill),
+                toggler(app.tray_at_login)
+                    .on_toggle(Message::TrayAtLogin)
+                    .size(22)
+                    .style(style::switch),
+            ]
+            .spacing(16)
             .align_y(Alignment::Center)
             .into()
         ),

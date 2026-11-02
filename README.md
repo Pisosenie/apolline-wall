@@ -34,6 +34,8 @@ apolline-wall status
 - **Wallpaper Engine.** Everything Wallpaper Engine has on this machine: Workshop subscriptions and its own projects, from every Steam library, the native client and the Flatpak alike. Install Wallpaper Engine through Steam with Proton and subscribe in the Workshop as you would on Windows. Its video wallpapers play here. Scenes, web and application wallpapers are listed, with the reason they can't be set yet.
 - **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes or everything, trending, newest or most subscribed, and search. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. **Subscribe in Steam** opens the item in the Steam client; once Steam has downloaded it, it appears in your library by itself and can be set from the same place. `apolline-wallpapers --page workshop` opens straight on this tab.
 - **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen or shows whole.
+- **Look.** Brightness, contrast, saturation and a mirror for anything, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
+- **Tray.** `apolline-wallpapers --tray` puts it in the tray without the window: pause, resume and a random wallpaper for each monitor, and the window a click away. Settings can start it at login through XDG autostart; on niri or Hyprland add the command to your startup.
 - **Now playing.** What each monitor shows, with pause.
 
 Thumbnails are cached in `~/.cache/apolline-wall`; videos get theirs from ffmpeg, shaders once the daemon has shown them, and animated Workshop previews a frame from their middle. Workshop titles in Chinese, Japanese or Korean need a CJK font such as `noto-fonts-cjk`.
@@ -48,9 +50,10 @@ Every instance listens on `$XDG_RUNTIME_DIR/apolline-wall.sock`, one JSON comman
 | `{"pause":{"paused":true}}` | no animation, videos and shaders stop, changes land at once; `"output"` for one monitor |
 | `{"limits":{"fps":30,"scale":0.5}}` | how hard shaders may work: frames per second (1–240, 30 to start with) and the share of the monitor's resolution they render at (0.1–1); either can be left out |
 | `{"uniforms":{"accent":"#86bdf0"}}` | the shell's accent, which shaders read as `iAccent` |
+| `{"adjust":{"look":{"brightness":-0.2,"contrast":1,"saturation":1,"flip":false,"speed":1},"draft":true}}` | the look of what is shown now; fields left out keep their defaults; `"output"` for one monitor; a draft shows but isn't remembered. `show` takes the same `look` |
 | `{"status":{}}` | answered to whoever asked with `{"status":{"outputs":[{"name","source","paused"}],"fps","scale"}}` |
 
-Events go to stdout and to every socket client. It answers `{"ready":{"output","source","poster"}}` once a monitor shows the new wallpaper, where `poster` is a still image of it, and `{"error":{"output","source","message"}}` when a file can't be read or a line isn't a command. A file that failed is not retried until the next `show`. Static pictures cost nothing between changes: no frames are drawn and no timers run.
+Events go to stdout and to every socket client, and after `pause`, `limits`, `uniforms` and `adjust` every client also gets a fresh `status`, so a tray, the app and the shell never disagree. It answers `{"ready":{"output","source","poster"}}` once a monitor shows the new wallpaper, where `poster` is a still image of it, and `{"error":{"output","source","message"}}` when a file can't be read or a line isn't a command. A file that failed is not retried until the next `show`. Static pictures cost nothing between changes: no frames are drawn and no timers run.
 
 ## Videos
 

@@ -4,13 +4,17 @@ mod daemon;
 mod engine;
 mod library;
 mod style;
+#[cfg(target_os = "linux")]
+mod tray;
 mod view;
 mod workshop;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use apolline_wall_protocol::protocol::{Command, Event, Fit, Limits, Monitor, Pause, Show};
+use apolline_wall_protocol::protocol::{
+    Adjust, Command, Event, Fit, Limits, Look, Monitor, Pause, Show,
+};
 use iced::widget::image::Handle;
 use iced::{Element, Font, Subscription, Task, Theme, window};
 
@@ -26,6 +30,14 @@ const FONTS: [&[u8]; 3] = [
 const BUSY: usize = 4;
 
 fn main() -> iced::Result {
+    #[cfg(target_os = "linux")]
+    if std::env::args().any(|arg| arg == "--tray") {
+        if let Err(message) = tray::run() {
+            eprintln!("apolline-wallpapers: {message}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let page = match std::env::args()
         .skip_while(|arg| arg != "--page")
         .nth(1)
@@ -96,6 +108,18 @@ pub struct App {
     pub fps: u32,
     pub scale: f32,
     pub browser: workshop::Browser,
+    /// The look being edited for the picked wallpaper.
+    pub look: Look,
+    pub tray_at_login: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Tweak {
+    Brightness(f32),
+    Contrast(f32),
+    Saturation(f32),
+    Speed(f32),
+    Flip(bool),
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +147,12 @@ pub enum Message {
     Dismiss,
     Open(String),
     Shop(browse::Shop),
+    Look(Tweak),
+    ApplyLook,
+    RevertLook,
+    ResetLook,
+    Sent(Result<(), String>),
+    TrayAtLogin(bool),
 }
 
 impl App {
@@ -130,6 +160,8 @@ impl App {
         let config = config::load();
         let mut app = App {
             browser: workshop::Browser::new(config.questionable),
+            look: Look::default(),
+            tray_at_login: config::tray_at_login(),
             config,
             items: Vec::new(),
             thumbs: HashMap::new(),
@@ -156,10 +188,7 @@ impl App {
     }
 
     pub fn folders(&self) -> Vec<PathBuf> {
-        config::defaults()
-            .into_iter()
-            .chain(self.config.folders.iter().cloned())
-            .collect()
+        self.config.all_folders()
     }
 
     pub fn rescan(&self) -> Task<Message> {
@@ -181,11 +210,16 @@ impl App {
                     .selected
                     .as_ref()
                     .is_none_or(|picked| !items.iter().any(|item| &item.path == picked));
-                if gone {
-                    let playable = items.iter().find(|item| item.what.missing().is_none());
-                    self.selected = playable.or(items.first()).map(|item| item.path.clone());
-                }
                 self.items = items;
+                if gone {
+                    let playable = self.items.iter().find(|item| item.what.missing().is_none());
+                    if let Some(path) = playable
+                        .or(self.items.first())
+                        .map(|item| item.path.clone())
+                    {
+                        self.pick(path);
+                    }
+                }
                 self.pump()
             }
             Message::Thumb(path, handle) => {
@@ -196,7 +230,42 @@ impl App {
                 self.pump()
             }
             Message::Select(path) => {
-                self.selected = Some(path);
+                self.pick(path);
+                Task::none()
+            }
+            Message::Look(tweak) => {
+                match tweak {
+                    Tweak::Brightness(value) => self.look.brightness = value,
+                    Tweak::Contrast(value) => self.look.contrast = value,
+                    Tweak::Saturation(value) => self.look.saturation = value,
+                    Tweak::Speed(value) => self.look.speed = value,
+                    Tweak::Flip(on) => self.look.flip = on,
+                }
+                self.adjust(true)
+            }
+            Message::ApplyLook => {
+                self.keep_look();
+                self.adjust(false)
+            }
+            Message::RevertLook => {
+                self.look = self
+                    .selected
+                    .as_deref()
+                    .map(|path| self.saved_look(path))
+                    .unwrap_or_default();
+                self.adjust(true)
+            }
+            Message::ResetLook => {
+                self.look = Look::default();
+                self.adjust(true)
+            }
+            Message::TrayAtLogin(on) => {
+                self.notice = config::set_tray_at_login(on).err();
+                self.tray_at_login = config::tray_at_login();
+                Task::none()
+            }
+            Message::Sent(result) => {
+                self.notice = result.err();
                 Task::none()
             }
             Message::Filter(filter) => {
@@ -220,12 +289,16 @@ impl App {
                 .filter(|item| item.what.missing().is_none())
                 .map(|item| item.path.clone())
             {
-                Some(source) => self.ask(Command::Show(Show {
-                    output: self.target.clone(),
-                    source,
-                    fit: self.fit,
-                    transition_ms: 600,
-                })),
+                Some(source) => {
+                    self.keep_look();
+                    self.ask(Command::Show(Show {
+                        output: self.target.clone(),
+                        source,
+                        fit: self.fit,
+                        transition_ms: 600,
+                        look: Some(self.look).filter(|look| !look.is_plain()),
+                    }))
+                }
                 None => Task::none(),
             },
             Message::Pause(output, paused) => self.ask(Command::Pause(Pause { output, paused })),
@@ -314,6 +387,60 @@ impl App {
             .map(drop)
             .map_err(|err| format!("xdg-open {link}: {err}"))
             .err();
+    }
+
+    fn pick(&mut self, path: PathBuf) {
+        self.look = self.saved_look(&path);
+        self.selected = Some(path);
+    }
+
+    pub fn saved_look(&self, path: &Path) -> Look {
+        self.config
+            .looks
+            .get(&path.to_string_lossy().into_owned())
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn keep_look(&mut self) {
+        let Some(path) = self
+            .selected
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+        if self.look.is_plain() {
+            self.config.looks.remove(&path);
+        } else {
+            self.config.looks.insert(path, self.look);
+        }
+        self.notice = config::save(&self.config).err();
+    }
+
+    /// Monitors where the picked wallpaper is on now and the look would show: the chosen one,
+    /// or every one showing it.
+    fn adjustable(&self) -> Vec<String> {
+        let Some(path) = &self.selected else {
+            return Vec::new();
+        };
+        let shown = self.shown_on(path);
+        match &self.target {
+            Some(target) if shown.contains(&target.as_str()) => vec![target.clone()],
+            Some(_) => Vec::new(),
+            None => shown.into_iter().map(str::to_owned).collect(),
+        }
+    }
+
+    fn adjust(&self, draft: bool) -> Task<Message> {
+        Task::batch(self.adjustable().into_iter().map(|output| {
+            let command = Command::Adjust(Adjust {
+                output: Some(output),
+                look: self.look,
+                draft,
+            });
+            Task::perform(daemon::send(command), Message::Sent)
+        }))
     }
 
     pub fn ask(&self, command: Command) -> Task<Message> {

@@ -39,7 +39,7 @@ use apolline_wall_protocol::source::{self, Kind, poster_path};
 
 use crate::gl::{self, Canvas, Gl, Target, Texture};
 use crate::picture::{self, Pixels, UPSIDE_DOWN, WHOLE};
-use crate::protocol::{self, Command, Event, Fit, Monitor, Show};
+use crate::protocol::{self, Adjust, Command, Event, Fit, Monitor, Show};
 use crate::state::{self, State};
 use crate::video::{Mpv, Player};
 
@@ -295,6 +295,11 @@ impl App {
                 message,
             });
         }
+        // Every client hears what changed, not only the one that asked.
+        let announce = matches!(
+            command,
+            Command::Pause(_) | Command::Limits(_) | Command::Uniforms(_) | Command::Adjust(_)
+        );
         match command {
             Command::Show(show) => {
                 for screen in &mut self.screens {
@@ -336,8 +341,66 @@ impl App {
             }
             Command::Limits(limits) => self.limit(limits),
             Command::Uniforms(uniforms) => self.tint(uniforms),
+            Command::Adjust(adjust) => self.adjust(adjust),
             Command::Status {} => protocol::emit(&self.status()),
         }
+        if announce {
+            protocol::emit(&self.status());
+        }
+    }
+
+    /// A new look for what is shown now, kept in the wanted wallpapers so a later refresh
+    /// doesn't take it back.
+    fn adjust(&mut self, adjust: Adjust) {
+        let look = Some(adjust.look);
+        match &adjust.output {
+            None => {
+                for show in self
+                    .everywhere
+                    .iter_mut()
+                    .chain(self.per_output.values_mut())
+                {
+                    show.look = look;
+                }
+            }
+            Some(name) => match (self.per_output.get_mut(name), &self.everywhere) {
+                (Some(show), _) => show.look = look,
+                (None, Some(everywhere)) => {
+                    let show = Show {
+                        output: Some(name.clone()),
+                        look,
+                        ..everywhere.clone()
+                    };
+                    self.per_output.insert(name.clone(), show);
+                }
+                (None, None) => {}
+            },
+        }
+        for index in 0..self.screens.len() {
+            let screen = &mut self.screens[index];
+            if adjust
+                .output
+                .as_ref()
+                .is_none_or(|name| *name == screen.name)
+                && let Some(shown) = &mut screen.shown
+            {
+                shown.show.look = look;
+                self.restyle(index);
+            }
+        }
+    }
+
+    /// Brings a video's pace in line with its look and redraws.
+    fn restyle(&mut self, index: usize) {
+        if let Some(shown) = &self.screens[index].shown
+            && let Picture::Video(source) = &shown.picture
+            && let Some(video) = self.videos.get(source)
+        {
+            video
+                .player
+                .set_speed(shown.show.look.unwrap_or_default().speed);
+        }
+        self.draw(index);
     }
 
     fn status(&self) -> Event {
@@ -349,6 +412,11 @@ impl App {
                     name: screen.name.clone(),
                     source: screen.shown.as_ref().map(|shown| shown.show.source.clone()),
                     paused: self.is_paused(&screen.name),
+                    look: screen
+                        .shown
+                        .as_ref()
+                        .and_then(|shown| shown.show.look)
+                        .filter(|look| !look.is_plain()),
                 })
                 .collect(),
             fps: self.fps,
@@ -372,6 +440,7 @@ impl App {
         let mut jobs: HashMap<(PathBuf, Fit), Vec<Job>> = HashMap::new();
         let mut videos = Vec::new();
         let mut scenes = Vec::new();
+        let mut restyled = Vec::new();
         for index in 0..self.screens.len() {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
                 continue;
@@ -391,6 +460,12 @@ impl App {
                     && latest.fit == show.fit
                     && (kind == Kind::Video || latest_size == size)
             }) {
+                if let Some(shown) = &mut self.screens[index].shown
+                    && shown.show.look.unwrap_or_default() != show.look.unwrap_or_default()
+                {
+                    shown.show.look = show.look;
+                    restyled.push(index);
+                }
                 continue;
             }
             self.generation += 1;
@@ -420,6 +495,9 @@ impl App {
         }
         for index in scenes {
             self.start_scene(index);
+        }
+        for index in restyled {
+            self.restyle(index);
         }
         self.fit_canvases();
     }
@@ -510,22 +588,20 @@ impl App {
 
     fn retire(&self, index: usize, old: Shown) -> Option<gl::Layer> {
         match old.picture {
-            Picture::Still(texture) => Some(gl::Layer { texture, uv: WHOLE }),
+            Picture::Still(texture) => Some(gl::Layer::new(texture, WHOLE, old.show.look)),
             Picture::Video(source) => {
                 let canvas = self.videos.get(&source)?.canvas.as_ref()?;
                 let target = self.screens[index].target.as_ref()?;
-                Some(gl::Layer {
-                    texture: self.gl.snapshot(canvas).ok()?,
-                    uv: picture::placement(old.show.fit, canvas.size, target.size()),
-                })
+                Some(gl::Layer::new(
+                    self.gl.snapshot(canvas).ok()?,
+                    picture::placement(old.show.fit, canvas.size, target.size()),
+                    old.show.look,
+                ))
             }
             Picture::Shader(scene) => {
                 let texture = self.gl.snapshot(&scene.canvas).ok();
                 self.drop_scene(*scene);
-                Some(gl::Layer {
-                    texture: texture?,
-                    uv: UPSIDE_DOWN,
-                })
+                Some(gl::Layer::new(texture?, UPSIDE_DOWN, old.show.look))
             }
         }
     }
@@ -537,23 +613,20 @@ impl App {
             return;
         };
         let after = match &shown.picture {
-            Picture::Still(texture) => gl::Layer {
-                texture: *texture,
-                uv: WHOLE,
-            },
+            Picture::Still(texture) => gl::Layer::new(*texture, WHOLE, shown.show.look),
             Picture::Video(source) => {
                 let Some(canvas) = self.videos.get(source).and_then(|v| v.canvas.as_ref()) else {
                     return;
                 };
-                gl::Layer {
-                    texture: canvas.texture,
-                    uv: picture::placement(shown.show.fit, canvas.size, target.size()),
-                }
+                gl::Layer::new(
+                    canvas.texture,
+                    picture::placement(shown.show.fit, canvas.size, target.size()),
+                    shown.show.look,
+                )
             }
-            Picture::Shader(scene) => gl::Layer {
-                texture: scene.canvas.texture,
-                uv: UPSIDE_DOWN,
-            },
+            Picture::Shader(scene) => {
+                gl::Layer::new(scene.canvas.texture, UPSIDE_DOWN, shown.show.look)
+            }
         };
         let progress = match &screen.fade {
             Some(fade) if !paused => {
