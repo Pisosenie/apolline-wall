@@ -44,6 +44,7 @@ check() {
 package() {
   cd "$_name"
   install -Dm755 target/release/apolline-wall "$pkgdir/usr/bin/apolline-wall"
+  install -Dm644 packaging/apolline-wall.service "$pkgdir/usr/lib/systemd/user/apolline-wall.service"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"

@@ -2,7 +2,8 @@ use std::path::Path;
 
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use image::{DynamicImage, ImageDecoder, ImageReader, RgbaImage};
+use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
+use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, RgbaImage};
 
 use crate::protocol::Fit;
 
@@ -84,20 +85,61 @@ fn letterbox(rgba: &[u8], (w, h): (u32, u32), (width, height): (u32, u32)) -> Pi
     }
 }
 
+pub fn save_png(path: &Path, rgba: &[u8], (w, h): (u32, u32)) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    PngEncoder::new_with_quality(
+        std::io::BufWriter::new(file),
+        CompressionType::Fast,
+        PngFilter::Adaptive,
+    )
+    .write_image(rgba, w, h, ExtendedColorType::Rgba8)
+    .map_err(|err| format!("{}: {err}", path.display()))
+}
+
 const VIDEO: [&str; 11] = [
     "mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "ogv", "ts", "gif",
 ];
 
-pub fn is_video(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| VIDEO.iter().any(|video| video.eq_ignore_ascii_case(ext)))
+const SHADER: [&str; 2] = ["frag", "glsl"];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Picture,
+    Video,
+    Shader,
+}
+
+pub fn kind(path: &Path) -> Kind {
+    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    let is = |list: &[&str]| list.iter().any(|known| known.eq_ignore_ascii_case(ext));
+    if is(&VIDEO) {
+        Kind::Video
+    } else if is(&SHADER) {
+        Kind::Shader
+    } else {
+        Kind::Picture
+    }
+}
+
+/// A shader draws every pixel every frame, so by default it gets about a 1080p screen's worth.
+const SHADER_PIXELS: f64 = 1920.0 * 1080.0;
+
+pub fn shader_size((w, h): (u32, u32), scale: Option<f32>) -> (u32, u32) {
+    let scale = scale.map_or_else(
+        || (SHADER_PIXELS / (w as f64 * h as f64)).sqrt().min(1.0),
+        f64::from,
+    );
+    let side = |n: u32| ((n as f64 * scale).round() as u32).max(1);
+    (side(w), side(h))
 }
 
 /// Scale and offset that map the target's 0..1 coordinates onto a source of another aspect.
 pub type Uv = [f32; 4];
 
 pub const WHOLE: Uv = [1.0, 1.0, 0.0, 0.0];
+
+/// What GL renders lands bottom row first.
+pub const UPSIDE_DOWN: Uv = [1.0, -1.0, 0.0, 1.0];
 
 pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
     let ratio = (tw as f32 / th as f32) / (sw as f32 / sh as f32);
@@ -132,11 +174,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn videos_are_told_apart_by_extension() {
-        assert!(is_video(Path::new("/w/sea.MP4")));
-        assert!(is_video(Path::new("/w/loop.gif")));
-        assert!(!is_video(Path::new("/w/fog.jpg")));
-        assert!(!is_video(Path::new("/w/noext")));
+    fn a_saved_png_reads_back_the_same() {
+        let path = std::env::temp_dir().join(format!("apolline-wall-{}.png", std::process::id()));
+        let rgba = [255, 0, 0, 255, 0, 0, 255, 255];
+        save_png(&path, &rgba, (2, 1)).unwrap();
+        let back = image::open(&path).unwrap().into_rgba8();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(back.into_raw(), rgba);
+    }
+
+    #[test]
+    fn sources_are_told_apart_by_extension() {
+        assert_eq!(kind(Path::new("/w/sea.MP4")), Kind::Video);
+        assert_eq!(kind(Path::new("/w/loop.gif")), Kind::Video);
+        assert_eq!(kind(Path::new("/w/waves.frag")), Kind::Shader);
+        assert_eq!(kind(Path::new("/w/fog.jpg")), Kind::Picture);
+        assert_eq!(kind(Path::new("/w/noext")), Kind::Picture);
+    }
+
+    #[test]
+    fn shaders_get_at_most_a_1080p_screen_unless_told_otherwise() {
+        assert_eq!(shader_size((1920, 1080), None), (1920, 1080));
+        assert_eq!(shader_size((1280, 800), None), (1280, 800));
+        assert_eq!(shader_size((3840, 2160), None), (1920, 1080));
+        assert_eq!(shader_size((3840, 2160), Some(0.25)), (960, 540));
     }
 
     #[test]

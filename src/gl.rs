@@ -1,3 +1,5 @@
+mod shader;
+
 use std::ffi::c_void;
 use std::num::NonZeroU32;
 use std::ptr::NonNull;
@@ -18,6 +20,7 @@ use raw_window_handle::{
 use crate::picture::{Pixels, Uv};
 
 pub use glow::Texture;
+pub use shader::{Inputs, Shader};
 
 const VERTEX: &str = "#version 300 es
 out vec2 uv;
@@ -53,6 +56,7 @@ pub struct Gl {
     context: PossiblyCurrentContext,
     gl: glow::Context,
     program: Program,
+    noise: Texture,
 }
 
 struct Program {
@@ -112,12 +116,14 @@ impl Gl {
             glow::Context::from_loader_function_cstr(|name| display.get_proc_address(name))
         };
         let program = unsafe { program(&gl)? };
+        let noise = unsafe { texture(&gl, NOISE, Some(&noise()), glow::REPEAT)? };
         Ok(Self {
             display,
             config,
             context,
             gl,
             program,
+            noise,
         })
     }
 
@@ -162,14 +168,15 @@ impl Gl {
 
     pub fn upload(&self, pixels: &Pixels) -> Result<Texture, String> {
         self.current()?;
-        unsafe { self.texture((pixels.width, pixels.height), Some(&pixels.rgba)) }
+        let size = (pixels.width, pixels.height);
+        unsafe { texture(&self.gl, size, Some(&pixels.rgba), glow::CLAMP_TO_EDGE) }
     }
 
     pub fn canvas(&self, size: (u32, u32)) -> Result<Canvas, String> {
         self.current()?;
         let gl = &self.gl;
         unsafe {
-            let texture = self.texture(size, None)?;
+            let texture = texture(gl, size, None, glow::CLAMP_TO_EDGE)?;
             let framebuffer = gl.create_framebuffer()?;
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
             gl.framebuffer_texture_2d(
@@ -265,61 +272,87 @@ impl Gl {
             .swap_buffers(&self.context)
             .map_err(|err| err.to_string())
     }
+}
 
-    unsafe fn texture(&self, (w, h): (u32, u32), rgba: Option<&[u8]>) -> Result<Texture, String> {
-        let gl = &self.gl;
-        unsafe {
-            let texture = gl.create_texture()?;
-            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-            for (name, value) in [
-                (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
-                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
-                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
-                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
-            ] {
-                gl.tex_parameter_i32(glow::TEXTURE_2D, name, value as i32);
+unsafe fn texture(
+    gl: &glow::Context,
+    (w, h): (u32, u32),
+    rgba: Option<&[u8]>,
+    wrap: u32,
+) -> Result<Texture, String> {
+    unsafe {
+        let texture = gl.create_texture()?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        for (name, value) in [
+            (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
+            (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+            (glow::TEXTURE_WRAP_S, wrap),
+            (glow::TEXTURE_WRAP_T, wrap),
+        ] {
+            gl.tex_parameter_i32(glow::TEXTURE_2D, name, value as i32);
+        }
+        gl.tex_storage_2d(glow::TEXTURE_2D, 1, glow::RGBA8, w as i32, h as i32);
+        if let Some(rgba) = rgba {
+            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                w as i32,
+                h as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(rgba)),
+            );
+        }
+        Ok(texture)
+    }
+}
+
+unsafe fn link(gl: &glow::Context, fragment: &str) -> Result<glow::Program, String> {
+    unsafe {
+        let id = gl.create_program()?;
+        let mut shaders = Vec::new();
+        let mut failed = None;
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, VERTEX),
+            (glow::FRAGMENT_SHADER, fragment),
+        ] {
+            let shader = gl.create_shader(kind)?;
+            gl.shader_source(shader, source);
+            gl.compile_shader(shader);
+            if !gl.get_shader_compile_status(shader) {
+                failed = Some(gl.get_shader_info_log(shader));
             }
-            gl.tex_storage_2d(glow::TEXTURE_2D, 1, glow::RGBA8, w as i32, h as i32);
-            if let Some(rgba) = rgba {
-                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-                gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
-                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    w as i32,
-                    h as i32,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(Some(rgba)),
-                );
+            gl.attach_shader(id, shader);
+            shaders.push(shader);
+        }
+        if failed.is_none() {
+            gl.link_program(id);
+            if !gl.get_program_link_status(id) {
+                failed = Some(gl.get_program_info_log(id));
             }
-            Ok(texture)
+        }
+        for shader in shaders {
+            gl.detach_shader(id, shader);
+            gl.delete_shader(shader);
+        }
+        match failed {
+            Some(log) => {
+                gl.delete_program(id);
+                Err(log.trim().to_owned())
+            }
+            None => Ok(id),
         }
     }
 }
 
 unsafe fn program(gl: &glow::Context) -> Result<Program, String> {
     unsafe {
-        let id = gl.create_program()?;
-        for (kind, source) in [
-            (glow::VERTEX_SHADER, VERTEX),
-            (glow::FRAGMENT_SHADER, FRAGMENT),
-        ] {
-            let shader = gl.create_shader(kind)?;
-            gl.shader_source(shader, source);
-            gl.compile_shader(shader);
-            if !gl.get_shader_compile_status(shader) {
-                return Err(gl.get_shader_info_log(shader));
-            }
-            gl.attach_shader(id, shader);
-        }
-        gl.link_program(id);
-        if !gl.get_program_link_status(id) {
-            return Err(gl.get_program_info_log(id));
-        }
+        let id = link(gl, FRAGMENT)?;
         gl.use_program(Some(id));
         for (name, unit) in [("before", 0), ("after", 1)] {
             let location = gl.get_uniform_location(id, name);
@@ -337,6 +370,21 @@ unsafe fn program(gl: &glow::Context) -> Result<Program, String> {
             progress: uniform("progress")?,
         })
     }
+}
+
+const NOISE: (u32, u32) = (256, 256);
+
+/// Shadertoy shaders often sample a noise texture from their channels; this one stands in for it.
+fn noise() -> Vec<u8> {
+    let mut state: u32 = 0x9e37_79b9;
+    (0..NOISE.0 * NOISE.1 * 4)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 24) as u8
+        })
+        .collect()
 }
 
 fn nonzero((w, h): (u32, u32)) -> Result<(NonZeroU32, NonZeroU32), String> {

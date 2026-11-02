@@ -1,18 +1,21 @@
 mod playback;
+mod shading;
+mod socket;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputInfo, OutputState};
-use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop::channel::{self, Sender};
 use smithay_client_toolkit::reexports::calloop::ping::{self, Ping};
+use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::wl_output::{Transform, WlOutput};
@@ -34,12 +37,20 @@ use smithay_client_toolkit::{
 };
 
 use crate::gl::{self, Canvas, Gl, Target, Texture};
-use crate::picture::{self, Pixels, WHOLE};
-use crate::protocol::{self, Command, Event, Fit, Show};
+use crate::picture::{self, Kind, Pixels, UPSIDE_DOWN, WHOLE};
+use crate::protocol::{self, Command, Event, Fit, Monitor, Show};
+use crate::state::{self, State};
 use crate::video::{Mpv, Player};
 
-pub fn run() -> Result<(), String> {
+/// Apolline starts it as a child and talks over stdin; on its own it runs as a daemon and remembers.
+pub enum Mode {
+    Child,
+    Daemon,
+}
+
+pub fn run(mode: Mode) -> Result<(), String> {
     share_arenas();
+    shading::local_time_zone();
     let conn = Connection::connect_to_env().map_err(|err| format!("Wayland: {err}"))?;
     let (globals, queue) = registry_queue_init::<App>(&conn).map_err(|err| err.to_string())?;
     let qh = queue.handle();
@@ -48,20 +59,23 @@ pub fn run() -> Result<(), String> {
     WaylandSource::new(conn.clone(), queue)
         .insert(handle.clone())
         .map_err(|err| err.to_string())?;
+    socket::serve(&handle)?;
 
-    let (commands, incoming) = channel::channel();
-    std::thread::spawn(move || read_commands(commands));
-    handle
-        .insert_source(incoming, |event, _, app: &mut App| match event {
-            channel::Event::Msg(Ok(command)) => app.command(command),
-            channel::Event::Msg(Err(message)) => protocol::emit(&Event::Error {
-                output: None,
-                source: None,
-                message,
-            }),
-            channel::Event::Closed => app.exit = true,
-        })
-        .map_err(|err| err.to_string())?;
+    if let Mode::Child = mode {
+        let (commands, incoming) = channel::channel();
+        std::thread::spawn(move || read_commands(commands));
+        handle
+            .insert_source(incoming, |event, _, app: &mut App| match event {
+                channel::Event::Msg(Ok(command)) => app.command(command),
+                channel::Event::Msg(Err(message)) => protocol::emit(&Event::Error {
+                    output: None,
+                    source: None,
+                    message,
+                }),
+                channel::Event::Closed => app.exit = true,
+            })
+            .map_err(|err| err.to_string())?;
+    }
 
     let (loads, loaded) = channel::channel();
     handle
@@ -99,16 +113,50 @@ pub fn run() -> Result<(), String> {
         mpv: None,
         wake,
         wl_display,
+        handle,
+        fps: shading::DEFAULT_FPS,
+        scale: None,
+        accent: shading::DEFAULT_ACCENT,
+        persist: None,
         generation: 0,
         exit: false,
     };
+    if let Mode::Daemon = mode {
+        app.persist = restore(&mut app);
+    }
     while !app.exit {
         event_loop
             .dispatch(None, &mut app)
             .map_err(|err| err.to_string())?;
     }
     app.close_videos();
+    let _ = std::fs::remove_file(protocol::socket_path());
     Ok(())
+}
+
+/// Replays the last session; a state file that doesn't parse is reported and left alone.
+fn restore(app: &mut App) -> Option<Persist> {
+    let path = state::path()?;
+    match state::load(&path) {
+        Ok(saved) => {
+            for command in saved.commands() {
+                app.command(command);
+            }
+            Some(Persist {
+                path,
+                good: saved.clone(),
+                state: saved,
+            })
+        }
+        Err(message) => {
+            protocol::emit(&Event::Error {
+                output: None,
+                source: None,
+                message: format!("{message}; not saving until it's fixed"),
+            });
+            None
+        }
+    }
 }
 
 fn read_commands(commands: Sender<Result<Command, String>>) {
@@ -138,8 +186,20 @@ struct App {
     mpv: Option<Rc<Mpv>>,
     wake: Ping,
     wl_display: *mut c_void,
+    handle: LoopHandle<'static, App>,
+    fps: u32,
+    scale: Option<f32>,
+    accent: [f32; 3],
+    persist: Option<Persist>,
     generation: u64,
     exit: bool,
+}
+
+/// The daemon's memory: what to restore, and what last showed for when a wallpaper fails.
+struct Persist {
+    path: PathBuf,
+    state: State,
+    good: State,
 }
 
 struct Screen {
@@ -160,6 +220,7 @@ struct Screen {
 enum Picture {
     Still(Texture),
     Video(PathBuf),
+    Shader(Box<Scene>),
 }
 
 struct Shown {
@@ -192,6 +253,16 @@ struct Video {
     unannounced: Vec<String>,
 }
 
+/// A shader drawn into its own canvas for one monitor, at a capped rate.
+struct Scene {
+    shader: gl::Shader,
+    canvas: Canvas,
+    time: f32,
+    last: Option<Instant>,
+    frame: i32,
+    timer: bool,
+}
+
 struct Batch {
     source: PathBuf,
     fit: Fit,
@@ -213,6 +284,16 @@ struct Loaded {
 
 impl App {
     fn command(&mut self, command: Command) {
+        if let Some(persist) = &mut self.persist
+            && persist.state.record(&command)
+            && let Err(message) = state::save(&persist.path, &persist.state)
+        {
+            protocol::emit(&Event::Error {
+                output: None,
+                source: None,
+                message,
+            });
+        }
         match command {
             Command::Show(show) => {
                 for screen in &mut self.screens {
@@ -245,12 +326,32 @@ impl App {
                     }
                 }
                 self.sync_pauses();
+                self.pause_scenes();
                 for index in 0..self.screens.len() {
                     if self.screens[index].fade.is_some() {
                         self.draw(index);
                     }
                 }
             }
+            Command::Limits(limits) => self.limit(limits),
+            Command::Uniforms(uniforms) => self.tint(uniforms),
+            Command::Status {} => protocol::emit(&self.status()),
+        }
+    }
+
+    fn status(&self) -> Event {
+        Event::Status {
+            outputs: self
+                .screens
+                .iter()
+                .map(|screen| Monitor {
+                    name: screen.name.clone(),
+                    source: screen.shown.as_ref().map(|shown| shown.show.source.clone()),
+                    paused: self.is_paused(&screen.name),
+                })
+                .collect(),
+            fps: self.fps,
+            scale: self.scale,
         }
     }
 
@@ -269,11 +370,12 @@ impl App {
     fn refresh(&mut self) {
         let mut jobs: HashMap<(PathBuf, Fit), Vec<Job>> = HashMap::new();
         let mut videos = Vec::new();
+        let mut scenes = Vec::new();
         for index in 0..self.screens.len() {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
                 continue;
             };
-            let video = picture::is_video(&show.source);
+            let kind = picture::kind(&show.source);
             let screen = &self.screens[index];
             if screen.failed.as_ref() == Some(&show) {
                 continue;
@@ -286,21 +388,22 @@ impl App {
             if latest.is_some_and(|(latest, latest_size)| {
                 latest.source == show.source
                     && latest.fit == show.fit
-                    && (video || latest_size == size)
+                    && (kind == Kind::Video || latest_size == size)
             }) {
                 continue;
             }
             self.generation += 1;
-            if video {
-                videos.push(index);
-            } else {
-                jobs.entry((show.source.clone(), show.fit))
+            match kind {
+                Kind::Video => videos.push(index),
+                Kind::Shader => scenes.push(index),
+                Kind::Picture => jobs
+                    .entry((show.source.clone(), show.fit))
                     .or_default()
                     .push(Job {
                         output: screen.output.clone(),
                         generation: self.generation,
                         size,
-                    });
+                    }),
             }
             self.screens[index].loading = Some(Loading {
                 generation: self.generation,
@@ -313,6 +416,9 @@ impl App {
         }
         for index in videos {
             self.start_video(index);
+        }
+        for index in scenes {
+            self.start_scene(index);
         }
         self.fit_canvases();
     }
@@ -342,7 +448,7 @@ impl App {
                 });
             }
             Err(message) => {
-                self.screens[index].failed = Some(loading.show);
+                self.give_up(index, loading.show);
                 protocol::emit(&Event::Error {
                     output: Some(output),
                     source: Some(loaded.source),
@@ -352,7 +458,24 @@ impl App {
         }
     }
 
+    fn give_up(&mut self, index: usize, show: Show) {
+        if let Some(persist) = &mut self.persist
+            && persist.state.undo(&show, &persist.good)
+            && let Err(message) = state::save(&persist.path, &persist.state)
+        {
+            protocol::emit(&Event::Error {
+                output: None,
+                source: None,
+                message,
+            });
+        }
+        self.screens[index].failed = Some(show);
+    }
+
     fn present(&mut self, index: usize, picture: Picture, loading: Loading) {
+        if let Some(persist) = &mut self.persist {
+            persist.good.keep(&loading.show);
+        }
         let paused = self.is_paused(&self.screens[index].name);
         let before = self.screens[index]
             .shown
@@ -395,6 +518,14 @@ impl App {
                     uv: picture::placement(old.show.fit, canvas.size, target.size()),
                 })
             }
+            Picture::Shader(scene) => {
+                let texture = self.gl.snapshot(&scene.canvas).ok();
+                self.drop_scene(*scene);
+                Some(gl::Layer {
+                    texture: texture?,
+                    uv: UPSIDE_DOWN,
+                })
+            }
         }
     }
 
@@ -418,6 +549,10 @@ impl App {
                     uv: picture::placement(shown.show.fit, canvas.size, target.size()),
                 }
             }
+            Picture::Shader(scene) => gl::Layer {
+                texture: scene.canvas.texture,
+                uv: UPSIDE_DOWN,
+            },
         };
         let progress = match &screen.fade {
             Some(fade) if !paused => {
@@ -426,7 +561,7 @@ impl App {
             _ => 1.0,
         };
         let fading = progress < 1.0;
-        let playing = matches!(shown.picture, Picture::Video(_)) && !paused;
+        let playing = matches!(shown.picture, Picture::Video(_) | Picture::Shader(_)) && !paused;
         if (fading || playing) && !screen.frame_pending {
             let surface = screen.layer.wl_surface();
             surface.frame(&self.qh, surface.clone());
@@ -459,6 +594,13 @@ impl App {
             if self.videos.get(&source).is_some_and(|video| video.waiting) {
                 self.pump(&source);
             }
+        }
+        let shader = matches!(
+            self.screens[index].shown.as_ref().map(|s| &s.picture),
+            Some(Picture::Shader(_))
+        );
+        if shader && !self.is_paused(&self.screens[index].name) {
+            self.tick_scene(index);
         }
         let screen = &self.screens[index];
         if !screen.frame_pending && (screen.fade.is_some() || screen.stale) {
@@ -522,6 +664,10 @@ impl App {
         let still = screen.shown.and_then(|shown| match shown.picture {
             Picture::Still(texture) => Some(texture),
             Picture::Video(_) => None,
+            Picture::Shader(scene) => {
+                self.drop_scene(*scene);
+                None
+            }
         });
         for texture in still
             .into_iter()
@@ -540,6 +686,17 @@ impl App {
             .iter()
             .position(|screen| screen.layer.wl_surface() == surface)
     }
+}
+
+fn poster_path(source: &Path) -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("apolline");
+    let _ = std::fs::create_dir_all(&dir);
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    dir.join(format!("poster-{:016x}.png", hasher.finish()))
 }
 
 fn decode(batches: mpsc::Receiver<Batch>, loads: Sender<Loaded>) {

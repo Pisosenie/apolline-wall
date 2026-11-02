@@ -1,7 +1,6 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use super::{App, Picture, Video};
+use super::{App, Picture, Video, poster_path};
 use crate::picture;
 use crate::protocol::{self, Event, Fit};
 use crate::video::{Happened, Mpv, Player};
@@ -21,7 +20,9 @@ impl App {
                     self.videos.insert(source.clone(), video);
                 }
                 Err(message) => {
-                    self.screens[index].failed = self.screens[index].loading.take().map(|l| l.show);
+                    if let Some(loading) = self.screens[index].loading.take() {
+                        self.give_up(index, loading.show);
+                    }
                     protocol::emit(&Event::Error {
                         output: Some(self.screens[index].name.clone()),
                         source: Some(source),
@@ -250,7 +251,8 @@ impl App {
     }
 
     fn fail(&mut self, source: &Path, message: String) {
-        for screen in &mut self.screens {
+        for index in 0..self.screens.len() {
+            let screen = &self.screens[index];
             let loading = screen
                 .loading
                 .as_ref()
@@ -259,15 +261,15 @@ impl App {
                 screen.shown.as_ref().map(|shown| &shown.picture),
                 Some(Picture::Video(shown)) if shown == source
             );
-            if loading {
-                screen.failed = screen.loading.take().map(|l| l.show);
-            }
             if loading || showing {
                 protocol::emit(&Event::Error {
                     output: Some(screen.name.clone()),
                     source: Some(source.to_path_buf()),
                     message: message.clone(),
                 });
+            }
+            if loading && let Some(loading) = self.screens[index].loading.take() {
+                self.give_up(index, loading.show);
             }
         }
         self.close(source);
@@ -321,15 +323,4 @@ impl App {
             .map(|(index, _)| index)
             .collect()
     }
-}
-
-fn poster_path(source: &Path) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("apolline");
-    let _ = std::fs::create_dir_all(&dir);
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    dir.join(format!("poster-{:016x}.png", hasher.finish()))
 }

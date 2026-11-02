@@ -1,0 +1,14 @@
+[Unit]
+Description=Live wallpapers
+Documentation=https://github.com/Pisosenie/apolline-wall
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/apolline-wall daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

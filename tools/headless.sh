@@ -35,9 +35,11 @@ wall=$!
 exec 3> "$fifo"
 
 send() { echo "$1" >&3; }
+shown() { grep -c '"ready"' "$events" || true; }
+differ() { cmp -s "$out/$1" "$out/$2" && echo "$3: no" || echo "$3: yes"; }
 ready() {
     for _ in $(seq 200); do
-        [ "$(grep -c '"ready"' "$events" || true)" -ge "$1" ] && return
+        [ "$(shown)" -ge "$1" ] && return
         sleep 0.05
     done
     echo "no ready event #$1" >&2
@@ -65,7 +67,6 @@ if command -v ffmpeg > /dev/null && ldconfig -p | grep 'libmpv\.so' > /dev/null;
     clip=$out/clip.mp4
     ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -t 2 \
         -c:v libx264 -pix_fmt yuv420p "$clip"
-    differ() { cmp -s "$out/$1" "$out/$2" && echo "$3: no" || echo "$3: yes"; }
     send '{"pause":{"paused":false}}'
     send '{"show":{"source":"'"$clip"'","transition_ms":500}}'
     ready 4
@@ -88,6 +89,29 @@ if command -v ffmpeg > /dev/null && ldconfig -p | grep 'libmpv\.so' > /dev/null;
 else
     echo "no ffmpeg or libmpv, skipping videos" >&2
 fi
+
+send '{"pause":{"paused":false}}'
+before=$(shown)
+send '{"show":{"source":"'"$root"'/tests/shaders/hills.frag","transition_ms":500}}'
+ready $((before + 1))
+sleep 0.8
+grim "$out/s1-shader.png"
+sleep 0.5
+grim "$out/s2-shader.png"
+differ s1-shader.png s2-shader.png "the shader moves"
+send '{"uniforms":{"accent":"#ff6a3d"}}'
+send '{"pause":{"paused":true}}'
+sleep 0.3
+grim "$out/s3-shader-ember.png"
+sleep 0.5
+grim "$out/s4-shader-ember.png"
+differ s3-shader-ember.png s4-shader-ember.png "a paused shader moves"
+differ s2-shader.png s3-shader-ember.png "a new accent shows while paused"
+send '{"pause":{"paused":false}}'
+send '{"show":{"source":"'"$walls"'/fog.jpg","transition_ms":2000}}'
+ready $((before + 2))
+sleep 1
+grim "$out/s5-shader-to-fog.png"
 
 send '{"show":{"source":"/nowhere/missing.jpg"}}'
 send '{"lights":{"on":true}}'
