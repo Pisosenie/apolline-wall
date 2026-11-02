@@ -1,0 +1,47 @@
+# Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
+pkgname=apolline-wall-git
+_name=apolline-wall
+pkgver=r0
+pkgrel=1
+pkgdesc='Wallpapers for the Apolline shell: a layer-shell surface per monitor, drawn with GLES'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Pisosenie/apolline-wall'
+license=('MIT OR Apache-2.0')
+depends=('wayland' 'libglvnd' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=("$_name")
+conflicts=("$_name")
+source=("$_name::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_name"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$_name"
+  install -Dm755 target/release/apolline-wall "$pkgdir/usr/bin/apolline-wall"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}
