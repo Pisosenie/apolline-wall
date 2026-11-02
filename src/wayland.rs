@@ -1,6 +1,10 @@
+mod playback;
+
 use std::collections::{HashMap, HashSet};
+use std::ffi::c_void;
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -8,6 +12,7 @@ use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Reg
 use smithay_client_toolkit::output::{OutputHandler, OutputInfo, OutputState};
 use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop::channel::{self, Sender};
+use smithay_client_toolkit::reexports::calloop::ping::{self, Ping};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::wl_output::{Transform, WlOutput};
@@ -28,9 +33,10 @@ use smithay_client_toolkit::{
     registry_handlers,
 };
 
-use crate::gl::{Gl, Target, Texture};
-use crate::picture::{self, Pixels};
+use crate::gl::{self, Canvas, Gl, Target, Texture};
+use crate::picture::{self, Pixels, WHOLE};
 use crate::protocol::{self, Command, Event, Fit, Show};
+use crate::video::{Mpv, Player};
 
 pub fn run() -> Result<(), String> {
     share_arenas();
@@ -68,9 +74,16 @@ pub fn run() -> Result<(), String> {
     let (decoder, batches) = mpsc::channel();
     std::thread::spawn(move || decode(batches, loads));
 
+    let (wake, woken) = ping::make_ping().map_err(|err| err.to_string())?;
+    handle
+        .insert_source(woken, |_, _, app: &mut App| app.tick())
+        .map_err(|err| err.to_string())?;
+
+    let wl_display: *mut c_void = conn.backend().display_ptr().cast();
     let mut app = App {
         screens: Vec::new(),
-        gl: Gl::new(conn.backend().display_ptr().cast())?,
+        videos: HashMap::new(),
+        gl: Gl::new(wl_display)?,
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
         compositor: CompositorState::bind(&globals, &qh)
@@ -83,6 +96,9 @@ pub fn run() -> Result<(), String> {
         paused_everywhere: false,
         paused: HashSet::new(),
         decoder,
+        mpv: None,
+        wake,
+        wl_display,
         generation: 0,
         exit: false,
     };
@@ -91,6 +107,7 @@ pub fn run() -> Result<(), String> {
             .dispatch(None, &mut app)
             .map_err(|err| err.to_string())?;
     }
+    app.close_videos();
     Ok(())
 }
 
@@ -105,6 +122,7 @@ fn read_commands(commands: Sender<Result<Command, String>>) {
 
 struct App {
     screens: Vec<Screen>,
+    videos: HashMap<PathBuf, Video>,
     gl: Gl,
     registry: RegistryState,
     outputs: OutputState,
@@ -117,6 +135,9 @@ struct App {
     paused_everywhere: bool,
     paused: HashSet<String>,
     decoder: mpsc::Sender<Batch>,
+    mpv: Option<Rc<Mpv>>,
+    wake: Ping,
+    wl_display: *mut c_void,
     generation: u64,
     exit: bool,
 }
@@ -132,16 +153,23 @@ struct Screen {
     fade: Option<Fade>,
     loading: Option<Loading>,
     frame_pending: bool,
+    stale: bool,
+    failed: Option<Show>,
+}
+
+enum Picture {
+    Still(Texture),
+    Video(PathBuf),
 }
 
 struct Shown {
-    texture: Texture,
+    picture: Picture,
     show: Show,
     size: (u32, u32),
 }
 
 struct Fade {
-    before: Texture,
+    before: gl::Layer,
     start: Instant,
     duration: Duration,
 }
@@ -150,6 +178,18 @@ struct Loading {
     generation: u64,
     show: Show,
     size: (u32, u32),
+}
+
+/// One player per file, whatever the number of monitors showing it.
+struct Video {
+    player: Player,
+    canvas: Option<Canvas>,
+    size: Option<(u32, u32)>,
+    started: bool,
+    waiting: bool,
+    paused: bool,
+    poster: Option<PathBuf>,
+    unannounced: Vec<String>,
 }
 
 struct Batch {
@@ -175,6 +215,11 @@ impl App {
     fn command(&mut self, command: Command) {
         match command {
             Command::Show(show) => {
+                for screen in &mut self.screens {
+                    if show.output.as_ref().is_none_or(|name| *name == screen.name) {
+                        screen.failed = None;
+                    }
+                }
                 match &show.output {
                     None => {
                         self.per_output.clear();
@@ -199,6 +244,7 @@ impl App {
                         self.paused.remove(&name);
                     }
                 }
+                self.sync_pauses();
                 for index in 0..self.screens.len() {
                     if self.screens[index].fade.is_some() {
                         self.draw(index);
@@ -212,39 +258,50 @@ impl App {
         self.paused_everywhere || self.paused.contains(name)
     }
 
+    fn wanted(&self, index: usize) -> Option<Show> {
+        let name = &self.screens[index].name;
+        self.per_output
+            .get(name)
+            .or(self.everywhere.as_ref())
+            .cloned()
+    }
+
     fn refresh(&mut self) {
         let mut jobs: HashMap<(PathBuf, Fit), Vec<Job>> = HashMap::new();
+        let mut videos = Vec::new();
         for index in 0..self.screens.len() {
-            let Some(size) = self.buffer_size(index) else {
+            let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
                 continue;
             };
+            let video = picture::is_video(&show.source);
             let screen = &self.screens[index];
-            let Some(show) = self
-                .per_output
-                .get(&screen.name)
-                .or(self.everywhere.as_ref())
-                .cloned()
-            else {
+            if screen.failed.as_ref() == Some(&show) {
                 continue;
-            };
+            }
             let latest = match (&screen.loading, &screen.shown) {
                 (Some(loading), _) => Some((&loading.show, loading.size)),
                 (None, Some(shown)) => Some((&shown.show, shown.size)),
                 (None, None) => None,
             };
             if latest.is_some_and(|(latest, latest_size)| {
-                latest.source == show.source && latest.fit == show.fit && latest_size == size
+                latest.source == show.source
+                    && latest.fit == show.fit
+                    && (video || latest_size == size)
             }) {
                 continue;
             }
             self.generation += 1;
-            jobs.entry((show.source.clone(), show.fit))
-                .or_default()
-                .push(Job {
-                    output: screen.output.clone(),
-                    generation: self.generation,
-                    size,
-                });
+            if video {
+                videos.push(index);
+            } else {
+                jobs.entry((show.source.clone(), show.fit))
+                    .or_default()
+                    .push(Job {
+                        output: screen.output.clone(),
+                        generation: self.generation,
+                        size,
+                    });
+            }
             self.screens[index].loading = Some(Loading {
                 generation: self.generation,
                 show,
@@ -254,13 +311,16 @@ impl App {
         for ((source, fit), jobs) in jobs {
             let _ = self.decoder.send(Batch { source, fit, jobs });
         }
+        for index in videos {
+            self.start_video(index);
+        }
+        self.fit_canvases();
     }
 
     fn loaded(&mut self, loaded: Loaded) {
         let Some(index) = self.screens.iter().position(|s| s.output == loaded.output) else {
             return;
         };
-        let paused = self.is_paused(&self.screens[index].name);
         let screen = &mut self.screens[index];
         if screen.loading.as_ref().map(|l| l.generation) != Some(loaded.generation) {
             return;
@@ -268,49 +328,74 @@ impl App {
         let Some(loading) = screen.loading.take() else {
             return;
         };
-        let texture = loaded.result.and_then(|pixels| match &screen.target {
-            Some(target) => self.gl.upload(target, &pixels),
-            None => Err("the output has no surface yet".into()),
-        });
-        let texture = match texture {
-            Ok(texture) => texture,
+        let texture = loaded.result.and_then(|pixels| self.gl.upload(&pixels));
+        give_back_memory();
+        let output = self.screens[index].name.clone();
+        match texture {
+            Ok(texture) => {
+                let source = loading.show.source.clone();
+                self.present(index, Picture::Still(texture), loading);
+                protocol::emit(&Event::Ready {
+                    output,
+                    poster: source.clone(),
+                    source,
+                });
+            }
             Err(message) => {
+                self.screens[index].failed = Some(loading.show);
                 protocol::emit(&Event::Error {
-                    output: Some(screen.name.clone()),
+                    output: Some(output),
                     source: Some(loaded.source),
                     message,
                 });
-                return;
             }
-        };
-        give_back_memory();
+        }
+    }
+
+    fn present(&mut self, index: usize, picture: Picture, loading: Loading) {
+        let paused = self.is_paused(&self.screens[index].name);
+        let before = self.screens[index]
+            .shown
+            .take()
+            .and_then(|old| self.retire(index, old));
+        let screen = &mut self.screens[index];
         if let Some(fade) = screen.fade.take() {
-            self.gl.delete(fade.before);
+            self.gl.delete(fade.before.texture);
         }
         let duration = Duration::from_millis(loading.show.transition_ms.into());
-        match screen.shown.take() {
-            Some(old) if !paused && !duration.is_zero() => {
+        match before {
+            Some(before) if !paused && !duration.is_zero() => {
                 screen.fade = Some(Fade {
-                    before: old.texture,
+                    before,
                     start: Instant::now(),
                     duration,
                 })
             }
-            Some(old) => self.gl.delete(old.texture),
+            Some(before) => self.gl.delete(before.texture),
             None => {}
         }
-        let event = Event::Ready {
-            output: screen.name.clone(),
-            source: loading.show.source.clone(),
-            poster: loading.show.source.clone(),
-        };
         screen.shown = Some(Shown {
-            texture,
+            picture,
             show: loading.show,
             size: loading.size,
         });
         self.draw(index);
-        protocol::emit(&event);
+        self.close_unused_videos();
+        self.sync_pauses();
+    }
+
+    fn retire(&self, index: usize, old: Shown) -> Option<gl::Layer> {
+        match old.picture {
+            Picture::Still(texture) => Some(gl::Layer { texture, uv: WHOLE }),
+            Picture::Video(source) => {
+                let canvas = self.videos.get(&source)?.canvas.as_ref()?;
+                let target = self.screens[index].target.as_ref()?;
+                Some(gl::Layer {
+                    texture: self.gl.snapshot(canvas).ok()?,
+                    uv: picture::placement(old.show.fit, canvas.size, target.size()),
+                })
+            }
+        }
     }
 
     fn draw(&mut self, index: usize) {
@@ -319,6 +404,21 @@ impl App {
         let (Some(target), Some(shown)) = (&screen.target, &screen.shown) else {
             return;
         };
+        let after = match &shown.picture {
+            Picture::Still(texture) => gl::Layer {
+                texture: *texture,
+                uv: WHOLE,
+            },
+            Picture::Video(source) => {
+                let Some(canvas) = self.videos.get(source).and_then(|v| v.canvas.as_ref()) else {
+                    return;
+                };
+                gl::Layer {
+                    texture: canvas.texture,
+                    uv: picture::placement(shown.show.fit, canvas.size, target.size()),
+                }
+            }
+        };
         let progress = match &screen.fade {
             Some(fade) if !paused => {
                 fade.start.elapsed().as_secs_f32() / fade.duration.as_secs_f32()
@@ -326,18 +426,20 @@ impl App {
             _ => 1.0,
         };
         let fading = progress < 1.0;
-        if fading && !screen.frame_pending {
+        let playing = matches!(shown.picture, Picture::Video(_)) && !paused;
+        if (fading || playing) && !screen.frame_pending {
             let surface = screen.layer.wl_surface();
             surface.frame(&self.qh, surface.clone());
             screen.frame_pending = true;
         }
+        screen.stale = false;
         let before = screen
             .fade
             .as_ref()
             .filter(|_| fading)
             .map(|fade| fade.before);
         let eased = progress * progress * (3.0 - 2.0 * progress);
-        if let Err(message) = self.gl.draw(target, before, shown.texture, eased.min(1.0)) {
+        if let Err(message) = self.gl.draw(target, before, after, eased.min(1.0)) {
             protocol::emit(&Event::Error {
                 output: Some(screen.name.clone()),
                 source: None,
@@ -345,7 +447,22 @@ impl App {
             });
         }
         if !fading && let Some(fade) = screen.fade.take() {
-            self.gl.delete(fade.before);
+            self.gl.delete(fade.before.texture);
+        }
+    }
+
+    fn frame_done(&mut self, index: usize) {
+        self.screens[index].frame_pending = false;
+        if let Some(Picture::Video(source)) = self.screens[index].shown.as_ref().map(|s| &s.picture)
+        {
+            let source = source.clone();
+            if self.videos.get(&source).is_some_and(|video| video.waiting) {
+                self.pump(&source);
+            }
+        }
+        let screen = &self.screens[index];
+        if !screen.frame_pending && (screen.fade.is_some() || screen.stale) {
+            self.draw(index);
         }
     }
 
@@ -402,17 +519,20 @@ impl App {
     fn forget(&mut self, index: usize) {
         let mut screen = self.screens.remove(index);
         drop(screen.target.take());
-        for texture in screen
-            .shown
-            .map(|s| s.texture)
+        let still = screen.shown.and_then(|shown| match shown.picture {
+            Picture::Still(texture) => Some(texture),
+            Picture::Video(_) => None,
+        });
+        for texture in still
             .into_iter()
-            .chain(screen.fade.map(|f| f.before))
+            .chain(screen.fade.map(|f| f.before.texture))
         {
             self.gl.delete(texture);
         }
         if let Some(viewport) = screen.viewport {
             viewport.destroy();
         }
+        self.close_unused_videos();
     }
 
     fn screen_of(&self, surface: &WlSurface) -> Option<usize> {
@@ -500,10 +620,7 @@ impl CompositorHandler for App {
 
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &WlSurface, _: u32) {
         if let Some(index) = self.screen_of(surface) {
-            self.screens[index].frame_pending = false;
-            if self.screens[index].fade.is_some() {
-                self.draw(index);
-            }
+            self.frame_done(index);
         }
     }
 
@@ -565,6 +682,8 @@ impl OutputHandler for App {
             fade: None,
             loading: None,
             frame_pending: false,
+            stale: false,
+            failed: None,
         });
     }
 

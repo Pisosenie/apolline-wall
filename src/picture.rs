@@ -84,9 +84,91 @@ fn letterbox(rgba: &[u8], (w, h): (u32, u32), (width, height): (u32, u32)) -> Pi
     }
 }
 
+const VIDEO: [&str; 11] = [
+    "mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "ogv", "ts", "gif",
+];
+
+pub fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| VIDEO.iter().any(|video| video.eq_ignore_ascii_case(ext)))
+}
+
+/// Scale and offset that map the target's 0..1 coordinates onto a source of another aspect.
+pub type Uv = [f32; 4];
+
+pub const WHOLE: Uv = [1.0, 1.0, 0.0, 0.0];
+
+pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
+    let ratio = (tw as f32 / th as f32) / (sw as f32 / sh as f32);
+    let (x, y) = match fit {
+        Fit::Cover => (ratio.min(1.0), ratio.recip().min(1.0)),
+        Fit::Contain => (ratio.max(1.0), ratio.recip().max(1.0)),
+    };
+    [x, y, (1.0 - x) / 2.0, (1.0 - y) / 2.0]
+}
+
+pub fn canvas_size(
+    (vw, vh): (u32, u32),
+    targets: impl IntoIterator<Item = (Fit, (u32, u32))>,
+) -> (u32, u32) {
+    let needed = targets
+        .into_iter()
+        .map(|(fit, (w, h))| {
+            let (x, y) = (w as f64 / vw as f64, h as f64 / vh as f64);
+            match fit {
+                Fit::Cover => x.max(y),
+                Fit::Contain => x.min(y),
+            }
+        })
+        .fold(0.0, f64::max);
+    let scale = if needed > 0.0 { needed.min(1.0) } else { 1.0 };
+    let side = |n: u32| ((n as f64 * scale).round() as u32).max(1);
+    (side(vw), side(vh))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn videos_are_told_apart_by_extension() {
+        assert!(is_video(Path::new("/w/sea.MP4")));
+        assert!(is_video(Path::new("/w/loop.gif")));
+        assert!(!is_video(Path::new("/w/fog.jpg")));
+        assert!(!is_video(Path::new("/w/noext")));
+    }
+
+    #[test]
+    fn cover_crops_the_wider_side_and_contain_adds_bars() {
+        let wide = (1920, 1080);
+        let laptop = (1440, 900);
+        let [x, y, dx, dy] = placement(Fit::Cover, wide, laptop);
+        assert!((x - 0.9).abs() < 1e-4 && y == 1.0 && (dx - 0.05).abs() < 1e-4 && dy == 0.0);
+        let [x, y, dx, dy] = placement(Fit::Contain, wide, laptop);
+        assert!(x == 1.0 && (y - 1.0 / 0.9).abs() < 1e-4 && dx == 0.0 && dy < 0.0);
+        assert_eq!(placement(Fit::Cover, laptop, laptop), WHOLE);
+    }
+
+    #[test]
+    fn the_canvas_is_as_big_as_the_largest_monitor_needs_and_never_upscaled() {
+        assert_eq!(
+            canvas_size((3840, 2160), [(Fit::Cover, (1920, 1080))]),
+            (1920, 1080)
+        );
+        assert_eq!(
+            canvas_size(
+                (3840, 2160),
+                [(Fit::Cover, (1440, 900)), (Fit::Cover, (2560, 1440))]
+            ),
+            (2560, 1440)
+        );
+        assert_eq!(
+            canvas_size((1280, 720), [(Fit::Cover, (2560, 1440))]),
+            (1280, 720)
+        );
+        assert_eq!(canvas_size((1280, 720), []), (1280, 720));
+    }
 
     fn solid(w: u32, h: u32, rgba: [u8; 4]) -> Source {
         Source {

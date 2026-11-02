@@ -5,6 +5,8 @@ mod picture;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod protocol;
 #[cfg(target_os = "linux")]
+mod video;
+#[cfg(target_os = "linux")]
 mod wayland;
 
 fn main() {

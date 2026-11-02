@@ -19,3 +19,4 @@ glutin = { version = "0.32", default-features = false, features = ["egl", "wayla
 glow = "0.16"
 raw-window-handle = "0.6"
 libc = "0.2"
+libloading = "0.8"

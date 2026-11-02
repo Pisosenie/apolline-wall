@@ -8,6 +8,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/apolline-wall'
 license=('MIT OR Apache-2.0')
 depends=('wayland' 'libglvnd' 'gcc-libs' 'glibc')
+optdepends=('mpv: video wallpapers')
 makedepends=('cargo' 'git')
 provides=("$_name")
 conflicts=("$_name")

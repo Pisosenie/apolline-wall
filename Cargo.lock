@@ -17,6 +17,7 @@ dependencies = [
  "glutin",
  "image",
  "libc",
+ "libloading",
  "raw-window-handle",
  "serde",
  "serde_json",

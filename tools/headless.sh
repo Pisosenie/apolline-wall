@@ -36,7 +36,7 @@ exec 3> "$fifo"
 
 send() { echo "$1" >&3; }
 ready() {
-    for _ in $(seq 100); do
+    for _ in $(seq 200); do
         [ "$(grep -c '"ready"' "$events" || true)" -ge "$1" ] && return
         sleep 0.05
     done
@@ -60,6 +60,34 @@ send '{"show":{"source":"'"$walls"'/night.jpg","transition_ms":3000}}'
 ready 3
 sleep 0.3
 grim "$out/4-night-while-paused.png"
+
+if command -v ffmpeg > /dev/null && ldconfig -p | grep 'libmpv\.so' > /dev/null; then
+    clip=$out/clip.mp4
+    ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -t 2 \
+        -c:v libx264 -pix_fmt yuv420p "$clip"
+    differ() { cmp -s "$out/$1" "$out/$2" && echo "$3: no" || echo "$3: yes"; }
+    send '{"pause":{"paused":false}}'
+    send '{"show":{"source":"'"$clip"'","transition_ms":500}}'
+    ready 4
+    sleep 0.8
+    grim "$out/5-video.png"
+    sleep 0.3
+    grim "$out/6-video.png"
+    differ 5-video.png 6-video.png "the video moves"
+    send '{"pause":{"paused":true}}'
+    sleep 0.3
+    grim "$out/7-video-paused.png"
+    sleep 0.5
+    grim "$out/8-video-paused.png"
+    differ 7-video-paused.png 8-video-paused.png "a paused video moves"
+    send '{"pause":{"paused":false}}'
+    send '{"show":{"source":"'"$walls"'/fog.jpg","transition_ms":2000}}'
+    ready 5
+    sleep 1
+    grim "$out/9-video-to-fog.png"
+else
+    echo "no ffmpeg or libmpv, skipping videos" >&2
+fi
 
 send '{"show":{"source":"/nowhere/missing.jpg"}}'
 send '{"lights":{"on":true}}'
