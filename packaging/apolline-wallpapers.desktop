@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Wallpapers
+Comment=Pick pictures, videos, shaders and Wallpaper Engine wallpapers for every monitor
+Exec=apolline-wallpapers
+Icon=preferences-desktop-wallpaper
+Categories=Settings;DesktopSettings;
+Keywords=wallpaper;background;live;video;shader;wallpaper engine;
+StartupWMClass=apolline-wallpapers
+Actions=workshop;
+
+[Desktop Action workshop]
+Name=Steam Workshop
+Exec=apolline-wallpapers --page workshop

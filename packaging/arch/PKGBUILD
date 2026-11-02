@@ -3,12 +3,17 @@ pkgname=apolline-wall-git
 _name=apolline-wall
 pkgver=r0
 pkgrel=1
-pkgdesc='Wallpapers for the Apolline shell: a layer-shell surface per monitor, drawn with GLES'
+pkgdesc='Live wallpapers for Wayland: pictures, videos, shaders and Wallpaper Engine videos, with an app to pick them'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/apolline-wall'
 license=('MIT OR Apache-2.0')
-depends=('wayland' 'libglvnd' 'libgcc' 'glibc')
-optdepends=('mpv: video wallpapers')
+depends=('wayland' 'libglvnd' 'libxkbcommon' 'libgcc' 'glibc')
+optdepends=(
+  'mpv: video wallpapers'
+  'ffmpeg: video thumbnails in the Wallpapers app'
+  'vulkan-icd-loader: faster drawing for the Wallpapers app'
+  'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
+)
 makedepends=('cargo' 'git')
 provides=("$_name")
 conflicts=("$_name")
@@ -31,21 +36,25 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release
+  cargo build --frozen --release --workspace
 }
 
 check() {
   cd "$_name"
   export RUSTUP_TOOLCHAIN=stable
   export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
-  cargo test --frozen --release
+  cargo test --frozen --release --workspace
 }
 
 package() {
   cd "$_name"
   install -Dm755 target/release/apolline-wall "$pkgdir/usr/bin/apolline-wall"
+  install -Dm755 target/release/apolline-wallpapers "$pkgdir/usr/bin/apolline-wallpapers"
   install -Dm644 packaging/apolline-wall.service "$pkgdir/usr/lib/systemd/user/apolline-wall.service"
+  install -Dm644 packaging/apolline-wallpapers.desktop "$pkgdir/usr/share/applications/apolline-wallpapers.desktop"
+  install -Dm644 tests/shaders/hills.frag "$pkgdir/usr/share/apolline-wall/wallpapers/hills.frag"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 app/assets/fonts/OFL.txt "$pkgdir/usr/share/licenses/$pkgname/OFL-Geist.txt"
 }

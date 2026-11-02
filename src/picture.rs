@@ -96,31 +96,6 @@ pub fn save_png(path: &Path, rgba: &[u8], (w, h): (u32, u32)) -> Result<(), Stri
     .map_err(|err| format!("{}: {err}", path.display()))
 }
 
-const VIDEO: [&str; 11] = [
-    "mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "ogv", "ts", "gif",
-];
-
-const SHADER: [&str; 2] = ["frag", "glsl"];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Picture,
-    Video,
-    Shader,
-}
-
-pub fn kind(path: &Path) -> Kind {
-    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-    let is = |list: &[&str]| list.iter().any(|known| known.eq_ignore_ascii_case(ext));
-    if is(&VIDEO) {
-        Kind::Video
-    } else if is(&SHADER) {
-        Kind::Shader
-    } else {
-        Kind::Picture
-    }
-}
-
 /// A shader draws every pixel every frame, so by default it gets about a 1080p screen's worth.
 const SHADER_PIXELS: f64 = 1920.0 * 1080.0;
 
@@ -181,15 +156,6 @@ mod tests {
         let back = image::open(&path).unwrap().into_rgba8();
         std::fs::remove_file(&path).unwrap();
         assert_eq!(back.into_raw(), rgba);
-    }
-
-    #[test]
-    fn sources_are_told_apart_by_extension() {
-        assert_eq!(kind(Path::new("/w/sea.MP4")), Kind::Video);
-        assert_eq!(kind(Path::new("/w/loop.gif")), Kind::Video);
-        assert_eq!(kind(Path::new("/w/waves.frag")), Kind::Shader);
-        assert_eq!(kind(Path::new("/w/fog.jpg")), Kind::Picture);
-        assert_eq!(kind(Path::new("/w/noext")), Kind::Picture);
     }
 
     #[test]

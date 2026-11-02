@@ -1,10 +1,10 @@
+use apolline_wall_protocol::protocol;
+
 mod cli;
 #[cfg(target_os = "linux")]
 mod gl;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod picture;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-mod protocol;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod state;
 #[cfg(target_os = "linux")]

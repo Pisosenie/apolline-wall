@@ -100,7 +100,7 @@ pub fn rgb(text: &str) -> Option<[f32; 3]> {
     Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
     Ready {
@@ -123,7 +123,7 @@ pub enum Event {
     },
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Monitor {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

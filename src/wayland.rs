@@ -4,9 +4,8 @@ mod socket;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -36,8 +35,10 @@ use smithay_client_toolkit::{
     registry_handlers,
 };
 
+use apolline_wall_protocol::source::{self, Kind, poster_path};
+
 use crate::gl::{self, Canvas, Gl, Target, Texture};
-use crate::picture::{self, Kind, Pixels, UPSIDE_DOWN, WHOLE};
+use crate::picture::{self, Pixels, UPSIDE_DOWN, WHOLE};
 use crate::protocol::{self, Command, Event, Fit, Monitor, Show};
 use crate::state::{self, State};
 use crate::video::{Mpv, Player};
@@ -375,7 +376,7 @@ impl App {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
                 continue;
             };
-            let kind = picture::kind(&show.source);
+            let kind = source::kind(&show.source);
             let screen = &self.screens[index];
             if screen.failed.as_ref() == Some(&show) {
                 continue;
@@ -686,17 +687,6 @@ impl App {
             .iter()
             .position(|screen| screen.layer.wl_surface() == surface)
     }
-}
-
-fn poster_path(source: &Path) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("apolline");
-    let _ = std::fs::create_dir_all(&dir);
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    dir.join(format!("poster-{:016x}.png", hasher.finish()))
 }
 
 fn decode(batches: mpsc::Receiver<Batch>, loads: Sender<Loaded>) {

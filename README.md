@@ -1,6 +1,6 @@
 # apolline-wall
 
-Live wallpapers for Linux: pictures, videos and Shadertoy shaders, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the app, KDE, GNOME and the rest.
+Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Engine's video wallpapers, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the Workshop, scenes, KDE, GNOME and the rest.
 
 ## Using it
 
@@ -13,7 +13,7 @@ Install `apolline-wall-git` from the AUR (or `packaging/arch` here), stop whatev
 | sway | `exec apolline-wall daemon` |
 | any session with systemd's `graphical-session.target` | `systemctl --user enable --now apolline-wall` |
 
-Then:
+Then pick wallpapers in the **Wallpapers** app (`apolline-wallpapers`), or from a terminal:
 
 ```sh
 apolline-wall set ~/Pictures/dunes.jpg                  # every monitor
@@ -25,6 +25,18 @@ apolline-wall status
 ```
 
 `set` waits until the wallpaper shows and says why if it can't. The daemon remembers what each monitor shows and the limits in `~/.config/apolline-wall/state.toml`, so a login comes back to the same desktop. A wallpaper that fails is not written there; the last one that showed stays. Under Apolline the shell decides instead.
+
+## The app
+
+`apolline-wallpapers` is a window to browse and set wallpapers, in Apolline's look, on any desktop. It talks to the daemon over the same socket as the CLI, and starts the daemon if it isn't running.
+
+- **Library.** Pictures, videos and shaders from `~/Pictures/Wallpapers`, `~/Videos/Wallpapers`, `~/.local/share/apolline-wall/wallpapers` and any folder you add in Settings.
+- **Wallpaper Engine.** Everything Wallpaper Engine has on this machine: Workshop subscriptions and its own projects, from every Steam library, the native client and the Flatpak alike. Install Wallpaper Engine through Steam with Proton and subscribe in the Workshop as you would on Windows. Its video wallpapers play here. Scenes, web and application wallpapers are listed, with the reason they can't be set yet.
+- **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes or everything, trending, newest or most subscribed, and search. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. **Subscribe in Steam** opens the item in the Steam client; once Steam has downloaded it, it appears in your library by itself and can be set from the same place. `apolline-wallpapers --page workshop` opens straight on this tab.
+- **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen or shows whole.
+- **Now playing.** What each monitor shows, with pause.
+
+Thumbnails are cached in `~/.cache/apolline-wall`; videos get theirs from ffmpeg, shaders once the daemon has shown them, and animated Workshop previews a frame from their middle. Workshop titles in Chinese, Japanese or Korean need a CJK font such as `noto-fonts-cjk`.
 
 ## Talking to it
 
