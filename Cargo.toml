@@ -13,7 +13,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 fast_image_resize = "6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-smithay-client-toolkit = "0.20"
+smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 glutin = { version = "0.32", default-features = false, features = ["egl", "wayland"] }
 glow = "0.16"

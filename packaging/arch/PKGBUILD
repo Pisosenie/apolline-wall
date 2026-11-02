@@ -7,7 +7,7 @@ pkgdesc='Wallpapers for the Apolline shell: a layer-shell surface per monitor, d
 arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/apolline-wall'
 license=('MIT OR Apache-2.0')
-depends=('wayland' 'libglvnd' 'gcc-libs' 'glibc')
+depends=('wayland' 'libglvnd' 'libgcc' 'glibc')
 optdepends=('mpv: video wallpapers')
 makedepends=('cargo' 'git')
 provides=("$_name")
@@ -29,6 +29,7 @@ prepare() {
 build() {
   cd "$_name"
   export RUSTUP_TOOLCHAIN=stable
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
   export CARGO_TARGET_DIR=target
   cargo build --frozen --release
 }
@@ -36,6 +37,7 @@ build() {
 check() {
   cd "$_name"
   export RUSTUP_TOOLCHAIN=stable
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
   cargo test --frozen --release
 }
 
