@@ -15,12 +15,13 @@ cargo build --manifest-path "$root/Cargo.toml" --release --quiet
 
 conf=$(mktemp)
 fifo=$(mktemp -u)
+scenes=$(mktemp -d)
 mkfifo "$fifo"
 printf 'output HEADLESS-1 resolution 1440x900 scale 1\ndefault_border none\n' > "$conf"
 before=$(sockets)
 WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman sway -c "$conf" > /dev/null 2>&1 &
 sway=$!
-trap 'kill $sway 2> /dev/null; rm -f "$conf" "$fifo"' EXIT
+trap 'kill $sway 2> /dev/null; rm -rf "$conf" "$fifo" "$scenes"' EXIT
 
 for _ in $(seq 50); do
     display=$(comm -13 <(echo "$before") <(sockets) | head -1)
@@ -30,6 +31,7 @@ done
 export WAYLAND_DISPLAY=${display:?sway did not start}
 
 events=$out/events.jsonl
+export APOLLINE_WALL_SCENE_RENDERER=$root/tests/scenes/stand-in.sh
 LIBGL_ALWAYS_SOFTWARE=1 "$target/release/apolline-wall" < "$fifo" > "$events" 2> "$out/stderr.log" &
 wall=$!
 exec 3> "$fifo"
@@ -112,6 +114,36 @@ send '{"show":{"source":"'"$walls"'/fog.jpg","transition_ms":2000}}'
 ready $((before + 2))
 sleep 1
 grim "$out/s5-shader-to-fog.png"
+
+if command -v swaybg > /dev/null; then
+    mkdir "$scenes/forest" "$scenes/broken"
+    echo '{"title":"Forest","type":"scene","preview":"preview.jpg"}' > "$scenes/forest/project.json"
+    cp "$walls/night.jpg" "$scenes/forest/preview.jpg"
+    echo '{"type":"scene"}' > "$scenes/broken/project.json"
+    touch "$scenes/broken/crash"
+    before=$(shown)
+    send '{"show":{"source":"'"$scenes"'/forest"}}'
+    ready $((before + 1))
+    grim "$out/c1-scene.png"
+    differ s5-shader-to-fog.png c1-scene.png "the scene shows"
+    renderer=$(pgrep -P $wall -x swaybg || true)
+    send '{"pause":{"paused":true}}'
+    sleep 0.3
+    echo "a paused scene's renderer: $(awk '/^State/ {print $3}' /proc/${renderer:?no renderer under the daemon}/status)"
+    send '{"pause":{"paused":false}}'
+    send '{"show":{"source":"'"$walls"'/ember.jpg"}}'
+    ready $((before + 2))
+    sleep 0.5
+    grim "$out/c2-scene-to-ember.png"
+    kill -0 "$renderer" 2> /dev/null && echo "the renderer outlived its scene" >&2
+    send '{"show":{"source":"'"$scenes"'/broken"}}'
+    ready $((before + 3))
+    sleep 0.5
+    grim "$out/c3-after-crash.png"
+    differ c2-scene-to-ember.png c3-after-crash.png "a crashed scene changes the desktop"
+else
+    echo "no swaybg to stand in for linux-wallpaperengine, skipping scenes" >&2
+fi
 
 send '{"show":{"source":"/nowhere/missing.jpg"}}'
 send '{"lights":{"on":true}}'

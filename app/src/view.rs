@@ -265,7 +265,10 @@ fn inspector(app: &App) -> Element<'_, Message> {
         );
     }
     details = details.push(section("Show on", monitors(app)));
-    if matches!(item.what, What::Picture | What::Video) {
+    if matches!(
+        item.what,
+        What::Picture | What::Video | What::Scene | What::Web
+    ) {
         details = details.push(section(
             "Fit",
             segmented(
@@ -278,7 +281,7 @@ fn inspector(app: &App) -> Element<'_, Message> {
             ),
         ));
     }
-    if item.what.missing().is_none() {
+    if item.what.takes_a_look() {
         details = details.push(section("Look", look::editor(app, item)));
     }
     let mut apply =

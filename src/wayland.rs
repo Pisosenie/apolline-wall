@@ -1,4 +1,5 @@
 mod playback;
+mod scenery;
 mod shading;
 mod socket;
 
@@ -89,6 +90,15 @@ pub fn run(mode: Mode) -> Result<(), String> {
     let (decoder, batches) = mpsc::channel();
     std::thread::spawn(move || decode(batches, loads));
 
+    let (endings, ends) = channel::channel();
+    handle
+        .insert_source(ends, |event, _, app: &mut App| {
+            if let channel::Event::Msg(ended) = event {
+                app.ended(ended);
+            }
+        })
+        .map_err(|err| err.to_string())?;
+
     let (wake, woken) = ping::make_ping().map_err(|err| err.to_string())?;
     handle
         .insert_source(woken, |_, _, app: &mut App| app.tick())
@@ -113,6 +123,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         decoder,
         mpv: None,
         wake,
+        endings,
         wl_display,
         handle,
         fps: shading::DEFAULT_FPS,
@@ -131,6 +142,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
             .map_err(|err| err.to_string())?;
     }
     app.close_videos();
+    app.close_externals();
     let _ = std::fs::remove_file(protocol::socket_path());
     Ok(())
 }
@@ -186,6 +198,7 @@ struct App {
     decoder: mpsc::Sender<Batch>,
     mpv: Option<Rc<Mpv>>,
     wake: Ping,
+    endings: Sender<scenery::Ended>,
     wl_display: *mut c_void,
     handle: LoopHandle<'static, App>,
     fps: u32,
@@ -216,12 +229,15 @@ struct Screen {
     frame_pending: bool,
     stale: bool,
     failed: Option<Show>,
+    /// Our surface is unmapped while another program draws this monitor.
+    hidden: bool,
 }
 
 enum Picture {
     Still(Texture),
     Video(PathBuf),
     Shader(Box<Scene>),
+    External(scenery::External),
 }
 
 struct Shown {
@@ -332,6 +348,7 @@ impl App {
                     }
                 }
                 self.sync_pauses();
+                self.sync_externals();
                 self.pause_scenes();
                 for index in 0..self.screens.len() {
                     if self.screens[index].fade.is_some() {
@@ -440,6 +457,7 @@ impl App {
         let mut jobs: HashMap<(PathBuf, Fit), Vec<Job>> = HashMap::new();
         let mut videos = Vec::new();
         let mut scenes = Vec::new();
+        let mut externals = Vec::new();
         let mut restyled = Vec::new();
         for index in 0..self.screens.len() {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
@@ -458,7 +476,7 @@ impl App {
             if latest.is_some_and(|(latest, latest_size)| {
                 latest.source == show.source
                     && latest.fit == show.fit
-                    && (kind == Kind::Video || latest_size == size)
+                    && (matches!(kind, Kind::Video | Kind::Scene) || latest_size == size)
             }) {
                 if let Some(shown) = &mut self.screens[index].shown
                     && shown.show.look.unwrap_or_default() != show.look.unwrap_or_default()
@@ -472,6 +490,7 @@ impl App {
             match kind {
                 Kind::Video => videos.push(index),
                 Kind::Shader => scenes.push(index),
+                Kind::Scene => externals.push(index),
                 Kind::Picture => jobs
                     .entry((show.source.clone(), show.fit))
                     .or_default()
@@ -495,6 +514,9 @@ impl App {
         }
         for index in scenes {
             self.start_scene(index);
+        }
+        for index in externals {
+            self.start_external(index);
         }
         for index in restyled {
             self.restyle(index);
@@ -556,6 +578,14 @@ impl App {
             persist.good.keep(&loading.show);
         }
         let paused = self.is_paused(&self.screens[index].name);
+        let was_external = matches!(
+            self.screens[index]
+                .shown
+                .as_ref()
+                .map(|shown| &shown.picture),
+            Some(Picture::External(_))
+        );
+        let external = matches!(picture, Picture::External(_));
         let before = self.screens[index]
             .shown
             .take()
@@ -566,7 +596,7 @@ impl App {
         }
         let duration = Duration::from_millis(loading.show.transition_ms.into());
         match before {
-            Some(before) if !paused && !duration.is_zero() => {
+            Some(before) if !paused && !external && !duration.is_zero() => {
                 screen.fade = Some(Fade {
                     before,
                     start: Instant::now(),
@@ -581,6 +611,9 @@ impl App {
             show: loading.show,
             size: loading.size,
         });
+        if was_external && !external {
+            self.unhide(index);
+        }
         self.draw(index);
         self.close_unused_videos();
         self.sync_pauses();
@@ -602,6 +635,10 @@ impl App {
                 let texture = self.gl.snapshot(&scene.canvas).ok();
                 self.drop_scene(*scene);
                 Some(gl::Layer::new(texture?, UPSIDE_DOWN, old.show.look))
+            }
+            Picture::External(external) => {
+                scenery::stop(&external);
+                None
             }
         }
     }
@@ -627,6 +664,7 @@ impl App {
             Picture::Shader(scene) => {
                 gl::Layer::new(scene.canvas.texture, UPSIDE_DOWN, shown.show.look)
             }
+            Picture::External(_) => return,
         };
         let progress = match &screen.fade {
             Some(fade) if !paused => {
@@ -742,6 +780,10 @@ impl App {
                 self.drop_scene(*scene);
                 None
             }
+            Picture::External(external) => {
+                scenery::stop(&external);
+                None
+            }
         });
         for texture in still
             .into_iter()
@@ -753,6 +795,33 @@ impl App {
             viewport.destroy();
         }
         self.close_unused_videos();
+    }
+
+    /// A background surface for one monitor; the compositor answers its first commit with
+    /// a configure, which is where drawing starts.
+    fn open_layer(
+        &self,
+        qh: &QueueHandle<Self>,
+        output: &WlOutput,
+    ) -> (LayerSurface, Option<WpViewport>) {
+        let surface = self.compositor.create_surface(qh);
+        let viewport = self
+            .viewporter
+            .as_ref()
+            .and_then(|viewporter| viewporter.get().ok())
+            .map(|viewporter| viewporter.get_viewport(&surface, qh, ()));
+        let layer = self.layers.create_layer_surface(
+            qh,
+            surface,
+            Layer::Background,
+            Some("apolline-wallpaper"),
+            Some(output),
+        );
+        layer.set_anchor(Anchor::all());
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.commit();
+        (layer, viewport)
     }
 
     fn screen_of(&self, surface: &WlSurface) -> Option<usize> {
@@ -874,23 +943,7 @@ impl OutputHandler for App {
             .info(&output)
             .and_then(|info| info.name)
             .unwrap_or_else(|| format!("output-{}", output.id().protocol_id()));
-        let surface = self.compositor.create_surface(qh);
-        let viewport = self
-            .viewporter
-            .as_ref()
-            .and_then(|viewporter| viewporter.get().ok())
-            .map(|viewporter| viewporter.get_viewport(&surface, qh, ()));
-        let layer = self.layers.create_layer_surface(
-            qh,
-            surface,
-            Layer::Background,
-            Some("apolline-wallpaper"),
-            Some(&output),
-        );
-        layer.set_anchor(Anchor::all());
-        layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.commit();
+        let (layer, viewport) = self.open_layer(qh, &output);
         self.screens.push(Screen {
             target: None,
             output,
@@ -904,6 +957,7 @@ impl OutputHandler for App {
             frame_pending: false,
             stale: false,
             failed: None,
+            hidden: false,
         });
     }
 

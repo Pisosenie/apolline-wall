@@ -1,6 +1,6 @@
 # apolline-wall
 
-Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Engine's video wallpapers, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the Workshop, scenes, KDE, GNOME and the rest.
+Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Engine's wallpapers, its scenes included, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for what comes next.
 
 ## Using it
 
@@ -19,6 +19,7 @@ Then pick wallpapers in the **Wallpapers** app (`apolline-wallpapers`), or from 
 apolline-wall set ~/Pictures/dunes.jpg                  # every monitor
 apolline-wall set ~/Videos/rain.mp4 --output DP-1       # one monitor
 apolline-wall set ~/shaders/hills.frag --transition 0
+apolline-wall set ~/.local/share/Steam/steamapps/workshop/content/431960/1234567890   # a scene
 apolline-wall limits --fps 20 --scale 0.5               # how hard shaders may work
 apolline-wall pause                                      # and resume
 apolline-wall status
@@ -31,10 +32,10 @@ apolline-wall status
 `apolline-wallpapers` is a window to browse and set wallpapers, in Apolline's look, on any desktop. It talks to the daemon over the same socket as the CLI, and starts the daemon if it isn't running.
 
 - **Library.** Pictures, videos and shaders from `~/Pictures/Wallpapers`, `~/Videos/Wallpapers`, `~/.local/share/apolline-wall/wallpapers` and any folder you add in Settings.
-- **Wallpaper Engine.** Everything Wallpaper Engine has on this machine: Workshop subscriptions and its own projects, from every Steam library, the native client and the Flatpak alike. Install Wallpaper Engine through Steam with Proton and subscribe in the Workshop as you would on Windows. Its video wallpapers play here. Scenes, web and application wallpapers are listed, with the reason they can't be set yet.
+- **Wallpaper Engine.** Everything Wallpaper Engine has on this machine: Workshop subscriptions and its own projects, from every Steam library, the native client and the Flatpak alike. Install Wallpaper Engine through Steam with Proton and subscribe in the Workshop as you would on Windows. Its videos play here; its scenes and web wallpapers play through linux-wallpaperengine (see [Scenes](#scenes)), and without it they are listed with what to install. Application wallpapers are Windows programs and say so.
 - **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes or everything, trending, newest or most subscribed, and search. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. **Subscribe in Steam** opens the item in the Steam client; once Steam has downloaded it, it appears in your library by itself and can be set from the same place. `apolline-wallpapers --page workshop` opens straight on this tab.
 - **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen or shows whole.
-- **Look.** Brightness, contrast, saturation and a mirror for anything, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
+- **Look.** Brightness, contrast, saturation and a mirror for anything but scenes, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
 - **Tray.** `apolline-wallpapers --tray` puts it in the tray without the window: pause, resume and a random wallpaper for each monitor, and the window a click away. Settings can start it at login through XDG autostart; on niri or Hyprland add the command to your startup.
 - **Now playing.** What each monitor shows, with pause.
 
@@ -46,7 +47,7 @@ Every instance listens on `$XDG_RUNTIME_DIR/apolline-wall.sock`, one JSON comman
 
 | Command | Does |
 |---|---|
-| `{"show":{"source":"/abs/path.jpg"}}` | every monitor; also `"output":"DP-1"` for one, `"fit":"cover"\|"contain"`, `"transition_ms":400` |
+| `{"show":{"source":"/abs/path.jpg"}}` | every monitor; a folder is a Wallpaper Engine project; also `"output":"DP-1"` for one, `"fit":"cover"\|"contain"`, `"transition_ms":400` |
 | `{"pause":{"paused":true}}` | no animation, videos and shaders stop, changes land at once; `"output"` for one monitor |
 | `{"limits":{"fps":30,"scale":0.5}}` | how hard shaders may work: frames per second (1–240, 30 to start with) and the share of the monitor's resolution they render at (0.1–1); either can be left out |
 | `{"uniforms":{"accent":"#86bdf0"}}` | the shell's accent, which shaders read as `iAccent` |
@@ -73,6 +74,17 @@ A `source` ending in `.frag` or `.glsl` is a fragment shader written for [Shader
 - A shader that doesn't compile comes back as an `error` with the compiler's message, and its line numbers point into your file.
 - The poster frame is its first frame, written as a PNG like a video's.
 
+## Scenes
+
+A `source` that is a folder is a Wallpaper Engine project, and its scene or web wallpaper is drawn by [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) (`linux-wallpaperengine-git` in the AUR), which runs as a process of its own on that monitor while ours steps aside. It reads the assets scenes are built from out of Wallpaper Engine's Steam install, so keep Wallpaper Engine installed. Video projects don't need it.
+
+- It starts silent and ignoring the mouse, at the `fps` from `limits` when it starts, and `fit` becomes its scaling: `cover` fills, `contain` shows whole. Looks don't apply.
+- Pause stops the process and resume continues it, so a paused scene costs nothing. It goes when the daemon goes, however the daemon goes.
+- `ready` comes once it has lasted a moment, with the project's preview as the poster.
+- If it stops on its own, the `error` carries its last words and the monitor goes back to what it showed before.
+- Changes to and from a scene don't crossfade.
+- `APOLLINE_WALL_SCENE_RENDERER` names another program that takes the same arguments; the tests use [`tests/scenes/stand-in.sh`](tests/scenes/stand-in.sh).
+
 ## Trying it
 
 ```sh
@@ -80,11 +92,11 @@ cargo build --release
 tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screenshot per step
 ```
 
-`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture.
+`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture. With swaybg installed a stand-in plays linux-wallpaperengine's part: a scene shows, its process stops while paused and is gone after the next wallpaper, and one that crashes leaves the desktop as it was.
 
 ## Next
 
-Live wallpapers for any Linux desktop, not only Apolline: a daemon and a CLI, then an app to pick and tune wallpapers, then KDE, GNOME and X11, wallpaper packages and the Steam Workshop. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Workshop downloads without the Steam client, a wallpaper's own properties, playlists and battery rules, then KDE, GNOME and X11, a scene renderer of our own and other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## License
 

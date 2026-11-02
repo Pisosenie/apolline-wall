@@ -13,6 +13,7 @@ optdepends=(
   'ffmpeg: video thumbnails in the Wallpapers app'
   'vulkan-icd-loader: faster drawing for the Wallpapers app'
   'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
+  'linux-wallpaperengine-git: Wallpaper Engine scenes and web wallpapers'
 )
 makedepends=('cargo' 'git')
 provides=("$_name")

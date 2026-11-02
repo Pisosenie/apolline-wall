@@ -43,21 +43,35 @@ impl What {
         }
     }
 
+    /// Scenes are drawn by another program, which takes no look of ours.
+    pub fn takes_a_look(self) -> bool {
+        matches!(self, What::Picture | What::Video | What::Shader)
+    }
+
     /// Why it can't be set yet, for the kinds only Wallpaper Engine itself draws.
     pub fn missing(self) -> Option<&'static str> {
         match self {
             What::Picture | What::Video | What::Shader => None,
-            What::Scene => Some(
-                "Wallpaper Engine scenes need a scene renderer, which is coming. Its videos work today.",
+            What::Scene | What::Web if renderer() => None,
+            What::Scene | What::Web => Some(
+                "Scenes and web wallpapers are drawn by linux-wallpaperengine: install linux-wallpaperengine-git from the AUR, and keep Wallpaper Engine in Steam for its assets. Its videos work without it.",
             ),
-            What::Web => {
-                Some("Wallpaper Engine web wallpapers are not drawn yet. Its videos work today.")
-            }
             What::Program => Some(
                 "Wallpaper Engine application wallpapers are Windows programs and won't run here.",
             ),
         }
     }
+}
+
+/// Whether the program that draws Wallpaper Engine's scenes is installed.
+fn renderer() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        std::env::var_os("APOLLINE_WALL_SCENE_RENDERER").is_some()
+            || std::env::var_os("PATH").is_some_and(|path| {
+                std::env::split_paths(&path).any(|dir| dir.join("linux-wallpaperengine").is_file())
+            })
+    })
 }
 
 impl From<Kind> for What {
@@ -66,6 +80,7 @@ impl From<Kind> for What {
             Kind::Picture => What::Picture,
             Kind::Video => What::Video,
             Kind::Shader => What::Shader,
+            Kind::Scene => What::Scene,
         }
     }
 }

@@ -152,7 +152,7 @@ fn monitor_menu(monitor: &Monitor) -> MenuItem<Tray> {
     let showing = monitor
         .source
         .as_deref()
-        .map_or("nothing".to_owned(), library::name_of);
+        .map_or("nothing".to_owned(), engine::title);
     let name = monitor.name.clone();
     let paused = monitor.paused;
     let toggle = name.clone();

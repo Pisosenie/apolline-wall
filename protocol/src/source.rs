@@ -14,10 +14,16 @@ pub enum Kind {
     Picture,
     Video,
     Shader,
+    /// A Wallpaper Engine project folder, drawn by linux-wallpaperengine.
+    Scene,
 }
 
-/// What a file would be shown as; anything unknown is tried as a picture.
+/// What a source would be shown as: a folder is a Wallpaper Engine project, and any file
+/// it doesn't recognize is tried as a picture.
 pub fn kind(path: &Path) -> Kind {
+    if path.is_dir() {
+        return Kind::Scene;
+    }
     known(path).unwrap_or(Kind::Picture)
 }
 
@@ -61,5 +67,6 @@ mod tests {
         assert_eq!(kind(Path::new("/w/noext")), Kind::Picture);
         assert_eq!(known(Path::new("/w/notes.txt")), None);
         assert_eq!(known(Path::new("/w/noext")), None);
+        assert_eq!(kind(&std::env::temp_dir()), Kind::Scene);
     }
 }

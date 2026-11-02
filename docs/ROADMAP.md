@@ -22,10 +22,11 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
   - A library of your folders plus Wallpaper Engine's: Workshop subscriptions, its default projects and yours, found in every Steam library (native and Flatpak). Posters, filters by kind, search.
   - An inspector with which monitor and how to fit.
   - A now-playing bar with pause, and settings for folders and shader limits.
-  - Wallpaper Engine videos play. Scenes, web and application wallpapers are listed with the reason they can't be set yet.
+  - Wallpaper Engine videos play here. Application wallpapers are listed with the reason they can't be set.
   - If the daemon isn't running, the app says so and starts it.
-- Looks: brightness, contrast, saturation and a mirror for anything, drawn in the final shader so they cost nothing, and speed for videos (mpv) and shaders (their clock). A live draft on the desktop with Apply and Revert, remembered per wallpaper and per monitor.
+- Looks: brightness, contrast, saturation and a mirror for everything we draw ourselves, drawn in the final shader so they cost nothing, and speed for videos (mpv) and shaders (their clock). A live draft on the desktop with Apply and Revert, remembered per wallpaper and per monitor.
 - A tray (StatusNotifierItem): pause, resume and random per monitor, and the window. It waits for the bar at login, and starts through XDG autostart from Settings. Every client gets a fresh status after a change, so the tray and the window agree.
+- Scenes and web wallpapers through `linux-wallpaperengine` (optional dependency), one process per monitor while our surface steps aside. Pause stops the process, it dies with the daemon, and one that crashes gives its last words in the error and puts the previous wallpaper back. Without it the app says what to install. `tools/headless.sh` checks all of it with a stand-in.
 - The Steam Workshop tab:
   - It browses without an account: Steam Community's browse page for the list, `GetPublishedFileDetails` for the details. Videos, scenes or everything; trending, newest or most subscribed; search.
   - Ratings: Questionable is off by default, Mature never shows.
@@ -60,16 +61,15 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - A wallpaper that crashes the daemon twice in a row is skipped until it's set again.
 - Under Apolline these come from its modes instead.
 
-### 5. Scenes
-- At first, hand those monitors to `linux-wallpaperengine` (optional dependency) running as its own process.
-- Then a scene renderer of our own on GLES, translating Wallpaper Engine's shaders with naga, written clean-room.
+### 5. Scenes of our own
+- Until then `linux-wallpaperengine` draws them, and a new `fps` limit reaches a scene only when it starts again; looks and speed don't apply to them.
+- A scene renderer of our own on GLES, translating Wallpaper Engine's shaders with naga, written clean-room. Then scenes get looks, crossfades and one process for everything.
 
 ### 6. Every distribution
 - The AUR first. Then Fedora COPR, Debian and Ubuntu packages, and a Flatpak if the sandbox allows layer-shell.
 
 ### Later
 - Shaders and scenes that react to audio: a PipeWire capture into an FFT texture.
-- Web wallpapers.
 
 ## Borrowed from WallpaperMachine
 

@@ -287,16 +287,16 @@ impl App {
             Message::Apply => match self
                 .picked()
                 .filter(|item| item.what.missing().is_none())
-                .map(|item| item.path.clone())
+                .map(|item| (item.path.clone(), item.what.takes_a_look()))
             {
-                Some(source) => {
+                Some((source, takes_a_look)) => {
                     self.keep_look();
                     self.ask(Command::Show(Show {
                         output: self.target.clone(),
                         source,
                         fit: self.fit,
                         transition_ms: 600,
-                        look: Some(self.look).filter(|look| !look.is_plain()),
+                        look: Some(self.look).filter(|look| takes_a_look && !look.is_plain()),
                     }))
                 }
                 None => Task::none(),
@@ -558,7 +558,7 @@ impl App {
         self.items
             .iter()
             .find(|item| item.path == path)
-            .map_or_else(|| library::name_of(path), |item| item.name.clone())
+            .map_or_else(|| engine::title(path), |item| item.name.clone())
     }
 
     /// Monitors showing this file right now.

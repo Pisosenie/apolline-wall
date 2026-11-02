@@ -5,7 +5,6 @@ use iced::{Alignment, ContentFit, Element, Fill};
 
 use super::{GAP, INSPECTOR, PREVIEW, TILE, monitors, segmented};
 use crate::browse::Shop;
-use crate::library::What;
 use crate::workshop::{self, Entry, Sort, Type};
 use crate::{App, Message, style};
 
@@ -220,13 +219,13 @@ fn inspector(app: &App) -> Element<'_, Message> {
                 Message::Shop(Shop::Set(entry.id.clone())),
             )),
         ),
-        (None, What::Video) if waiting => (
+        (None, what) if what.missing().is_none() && waiting => (
             Some(
                 "Waiting for Steam to download it. It shows up here and in your library as soon as it's done.",
             ),
             None,
         ),
-        (None, What::Video) => (
+        (None, what) if what.missing().is_none() => (
             Some(
                 "Steam downloads it when you subscribe, into the folder this app reads. It needs Wallpaper Engine in your Steam library, installed with Proton.",
             ),

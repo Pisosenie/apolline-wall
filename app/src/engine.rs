@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use serde::Deserialize;
 
 use crate::config;
-use crate::library::{Item, What};
+use crate::library::{self, Item, What};
 
 /// Wallpaper Engine's Steam app id; its Workshop downloads land in a folder with this name.
 const APP: &str = "431960";
@@ -122,6 +122,17 @@ pub fn read(dir: &Path) -> Option<Item> {
     })
 }
 
+/// The title Wallpaper Engine gives a project folder or the video inside one, and for
+/// anything else its file name read as a title.
+pub fn title(path: &Path) -> String {
+    [Some(path), path.parent()]
+        .into_iter()
+        .flatten()
+        .filter_map(read)
+        .find(|item| item.path == path)
+        .map_or_else(|| library::name_of(path), |item| item.name)
+}
+
 /// Whether Steam has finished downloading a Workshop item into any library.
 pub fn downloaded(id: &str) -> bool {
     folders()
@@ -185,6 +196,9 @@ mod tests {
         );
         assert!(items[1].path.ends_with("2345678/rain.mp4"));
         assert_eq!(items[1].workshop.as_deref(), Some("2345678"));
+        assert_eq!(title(&items[0].path), "Forest");
+        assert_eq!(title(&items[1].path), "Neon rain");
+        assert_eq!(title(&content.join("2345678/preview.gif")), "preview");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
