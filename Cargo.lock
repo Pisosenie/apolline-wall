@@ -139,6 +139,7 @@ dependencies = [
  "iced",
  "image",
  "ksni",
+ "libc",
  "serde",
  "serde_json",
  "tokio",

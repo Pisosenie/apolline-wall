@@ -1,8 +1,10 @@
 mod browse;
 mod config;
 mod daemon;
+mod download;
 mod engine;
 mod library;
+mod steamcmd;
 mod style;
 #[cfg(target_os = "linux")]
 mod tray;
@@ -111,6 +113,7 @@ pub struct App {
     /// The look being edited for the picked wallpaper.
     pub look: Look,
     pub tray_at_login: bool,
+    pub steam: download::Steam,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,6 +156,7 @@ pub enum Message {
     ResetLook,
     Sent(Result<(), String>),
     TrayAtLogin(bool),
+    Steam(download::Act),
 }
 
 impl App {
@@ -162,6 +166,7 @@ impl App {
             browser: workshop::Browser::new(config.questionable),
             look: Look::default(),
             tray_at_login: config::tray_at_login(),
+            steam: download::Steam::new(config.steam_account.as_deref()),
             config,
             items: Vec::new(),
             thumbs: HashMap::new(),
@@ -336,6 +341,7 @@ impl App {
                 }
             }
             Message::Shop(shop) => self.shop(shop),
+            Message::Steam(act) => self.steam(act),
             Message::Folder(folder) => {
                 self.folder = folder;
                 Task::none()

@@ -16,6 +16,9 @@ pub struct Config {
     /// How each wallpaper should look, by its path; plain ones aren't listed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub looks: BTreeMap<String, Look>,
+    /// The Steam account steamcmd signs in with; its password is never kept here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steam_account: Option<String>,
 }
 
 impl Config {
@@ -48,15 +51,19 @@ pub fn cache_dir() -> PathBuf {
         .join("apolline-wall")
 }
 
+pub fn data_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".local/share"))
+        .join("apolline-wall")
+}
+
 /// Where wallpapers usually live, listed whether or not they exist yet.
 pub fn defaults() -> Vec<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".local/share"));
     vec![
         home().join("Pictures/Wallpapers"),
         home().join("Videos/Wallpapers"),
-        data.join("apolline-wall/wallpapers"),
+        data_dir().join("wallpapers"),
         PathBuf::from("/usr/share/apolline-wall/wallpapers"),
     ]
 }

@@ -2,7 +2,7 @@ use apolline_wall_protocol::protocol::{Command, Show};
 use iced::Task;
 use iced::widget::image::Handle;
 
-use crate::workshop::{self, Entry, Sort, Type};
+use crate::workshop::{self, Back, Page, Scope, Sort, Type};
 use crate::{App, Message, config, engine};
 
 /// Workshop previews fetched at once.
@@ -15,7 +15,10 @@ pub enum Shop {
     Search(String),
     Find,
     More,
-    Loaded(Result<Vec<Entry>, String>),
+    Loaded(Result<Page, String>),
+    /// Opens a collection or an author's items, with the title to show above them.
+    Enter(Scope, String),
+    Back,
     Preview(String, Option<Handle>),
     Select(String),
     Subscribe(String),
@@ -27,11 +30,20 @@ pub enum Shop {
 impl App {
     /// The first visit loads the first page; later visits keep what was there.
     pub fn open_workshop(&mut self) -> Task<Message> {
-        if self.browser.pages == 0 && !self.browser.loading {
+        let first = if self.browser.pages == 0 && !self.browser.loading {
             self.load()
         } else {
             Task::none()
+        };
+        if self.browser.checked {
+            return first;
         }
+        self.browser.checked = true;
+        Task::batch([
+            first,
+            self.check_updates(),
+            Task::future(workshop::prune_previews()).discard(),
+        ])
     }
 
     fn load(&mut self) -> Task<Message> {
@@ -69,8 +81,8 @@ impl App {
             Shop::Loaded(result) => {
                 self.browser.loading = false;
                 match result {
-                    Ok(entries) => {
-                        self.browser.add(entries);
+                    Ok(page) => {
+                        self.browser.add(page);
                         self.previews()
                     }
                     Err(message) => {
@@ -86,6 +98,30 @@ impl App {
                 }
                 self.previews()
             }
+            Shop::Enter(scope, heading) => {
+                if self.browser.back.is_none() {
+                    self.browser.back = Some(Back {
+                        query: self.browser.query.clone(),
+                        selected: self.browser.selected.take(),
+                    });
+                }
+                if self.browser.query.kind == Type::Collections {
+                    self.browser.query.kind = Type::Everything;
+                }
+                self.browser.query.scope = scope;
+                self.browser.heading = heading;
+                self.browser.selected = None;
+                self.reload()
+            }
+            Shop::Back => match self.browser.back.take() {
+                Some(back) => {
+                    self.browser.query = back.query;
+                    self.browser.selected = back.selected;
+                    self.browser.heading.clear();
+                    self.reload()
+                }
+                None => Task::none(),
+            },
             Shop::Select(id) => {
                 self.browser.selected = Some(id);
                 Task::none()

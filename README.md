@@ -33,13 +33,15 @@ apolline-wall status
 
 - **Library.** Pictures, videos and shaders from `~/Pictures/Wallpapers`, `~/Videos/Wallpapers`, `~/.local/share/apolline-wall/wallpapers` and any folder you add in Settings.
 - **Wallpaper Engine.** Everything Wallpaper Engine has on this machine: Workshop subscriptions and its own projects, from every Steam library, the native client and the Flatpak alike. Install Wallpaper Engine through Steam with Proton and subscribe in the Workshop as you would on Windows. Its videos play here; its scenes and web wallpapers play through linux-wallpaperengine (see [Scenes](#scenes)), and without it they are listed with what to install. Application wallpapers are Windows programs and say so.
-- **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes or everything, trending, newest or most subscribed, and search. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. **Subscribe in Steam** opens the item in the Steam client; once Steam has downloaded it, it appears in your library by itself and can be set from the same place. `apolline-wallpapers --page workshop` opens straight on this tab.
+- **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes, everything or collections, trending, newest or most subscribed, and search. A collection opens to what it holds, and **More from the author** lists the rest of an author's work. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. Collections have no rating of their own, so one shows only if the first wallpapers in it pass. `apolline-wallpapers --page workshop` opens straight on this tab. Two ways to get an item:
+  - With the Steam client, **Subscribe in Steam** opens the item there; once Steam has downloaded it, it appears in your library by itself and can be set from the same place.
+  - Without it, **Download** goes through `steamcmd` (the `steamcmd` package in the AUR) with a Steam account that owns Wallpaper Engine. Sign in once under **Steam account** in Settings: steamcmd asks for the password and the Steam Guard code, the app shows its question and hands your answer straight to it, and steamcmd keeps the sign-in. The app saves only the account name. Downloads land in `~/.local/share/apolline-wall/steamcmd`, one at a time, and each time the Workshop tab opens the app asks the Workshop which of them have a newer version, for an **Update** button.
 - **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen or shows whole.
 - **Look.** Brightness, contrast, saturation and a mirror for anything but scenes, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
 - **Tray.** `apolline-wallpapers --tray` puts it in the tray without the window: pause, resume and a random wallpaper for each monitor, and the window a click away. Settings can start it at login through XDG autostart; on niri or Hyprland add the command to your startup.
 - **Now playing.** What each monitor shows, with pause.
 
-Thumbnails are cached in `~/.cache/apolline-wall`; videos get theirs from ffmpeg, shaders once the daemon has shown them, and animated Workshop previews a frame from their middle. Workshop titles in Chinese, Japanese or Korean need a CJK font such as `noto-fonts-cjk`.
+Thumbnails are cached in `~/.cache/apolline-wall`; videos get theirs from ffmpeg, shaders once the daemon has shown them, and animated Workshop previews a frame from their middle. Workshop previews are kept to 150 MB, oldest out first. Workshop titles in Chinese, Japanese or Korean need a CJK font such as `noto-fonts-cjk`.
 
 ## Talking to it
 
@@ -96,7 +98,7 @@ tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screensho
 
 ## Next
 
-Workshop downloads without the Steam client, a wallpaper's own properties, playlists and battery rules, then KDE, GNOME and X11, a scene renderer of our own and other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+A wallpaper's own properties, playlists and battery rules, then KDE, GNOME and X11, a scene renderer of our own and other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## License
 

@@ -32,16 +32,15 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
   - Ratings: Questionable is off by default, Mature never shows.
   - Previews are cached, with a frame from the middle of animated ones.
   - **Subscribe in Steam** hands the item to the Steam client. The app watches for the download, only while one is pending, and the item shows up in the library ready to set.
+  - Collections through `GetCollectionDetails`, and an author's work from their Workshop page. Collections carry no rating, so each is judged by its first four wallpapers.
+  - Without the Steam client, downloads through `steamcmd`, driven in a pseudo-terminal of its own: the password and the Steam Guard code go only to its prompt, and the app keeps only the account name. Signing in checks `licenses_for_app 431960`. steamcmd downloads into its own staging folder and moves a finished item into place. Updates are found by comparing `time_updated` with what steamcmd recorded, each time the tab opens. Tested against a stand-in, `tests/steamcmd/stand-in.sh`.
+  - The preview cache stays under 150 MB.
 
 ## Next
 
 ### 1. The rest of the Workshop
-- Collections and authors through `GetCollectionDetails`, and a size cap on the preview cache.
-- For people without the Steam client: downloads through `steamcmd`.
-  - It needs an account that owns Wallpaper Engine (app 431960), checked with `licenses_for_app 431960` first.
-  - The password and the Steam Guard code go only to steamcmd's prompt and are never stored.
-  - A download lands in staging and moves into place in one step.
-  - A daily update check compares `time_updated`.
+- Wallpaper Engine's own assets through steamcmd (`app_update 431960` for the Windows platform), so linux-wallpaperengine draws scenes without the Steam client.
+- Check steamcmd against a real account on x86_64 Arch: so far only the stand-in has answered.
 - The content stays its authors'. Nothing is redistributed.
 
 ### 2. Properties and the rest of the app

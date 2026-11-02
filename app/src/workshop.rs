@@ -1,16 +1,20 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use iced::widget::image::Handle;
-use serde::Deserialize;
 
 use crate::config;
 use crate::library::What;
 
+mod api;
+
+pub use api::{browse, updates};
+
 const APP: &str = "431960";
 const PAGE: usize = 30;
-const DETAILS: &str =
-    "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+/// Workshop previews kept on disk; the oldest go first.
+const PREVIEW_CACHE: u64 = 150 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -24,6 +28,26 @@ pub enum Type {
     Videos,
     Scenes,
     Everything,
+    Collections,
+}
+
+impl Type {
+    fn fits(self, entry: &Entry) -> bool {
+        match self {
+            Type::Videos => entry.content == Content::Wallpaper(What::Video),
+            Type::Scenes => entry.content == Content::Wallpaper(What::Scene),
+            Type::Everything => true,
+            Type::Collections => matches!(entry.content, Content::Collection(_)),
+        }
+    }
+}
+
+/// Where the list comes from: the whole Workshop, one collection, or one author's items.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Workshop,
+    Collection(String),
+    Author(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +56,23 @@ pub struct Query {
     pub kind: Type,
     pub search: String,
     pub questionable: bool,
+    pub scope: Scope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Content {
+    Wallpaper(What),
+    /// A collection and how many wallpapers it holds.
+    Collection(usize),
+}
+
+impl Content {
+    pub fn label(self) -> &'static str {
+        match self {
+            Content::Wallpaper(what) => what.label(),
+            Content::Collection(_) => "Collection",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,12 +80,29 @@ pub struct Entry {
     pub id: String,
     pub title: String,
     pub preview: Option<String>,
-    pub what: What,
+    pub content: Content,
+    /// The author's SteamID64.
+    pub creator: String,
     pub size: u64,
     pub subscriptions: u64,
     pub updated: u64,
     /// Genre and resolution, the tags worth reading.
     pub tags: Vec<String>,
+}
+
+/// One answer to a listing: its entries, the author's name on an author's page, and whether
+/// nothing comes after it.
+#[derive(Clone, Debug)]
+pub struct Page {
+    pub entries: Vec<Entry>,
+    pub author: Option<String>,
+    pub last: bool,
+}
+
+/// The list to go back to from a collection or an author.
+pub struct Back {
+    pub query: Query,
+    pub selected: Option<String>,
 }
 
 /// What the Workshop tab shows: the pages loaded so far, their previews, and the items
@@ -61,6 +119,12 @@ pub struct Browser {
     pub queue: VecDeque<Entry>,
     pub busy: usize,
     pub waiting: HashSet<String>,
+    /// The collection's title or the author's name while one is open.
+    pub heading: String,
+    pub back: Option<Back>,
+    /// Items downloaded here that the Workshop has a newer version of.
+    pub updates: HashSet<String>,
+    pub checked: bool,
 }
 
 impl Browser {
@@ -71,6 +135,7 @@ impl Browser {
                 kind: Type::Videos,
                 search: String::new(),
                 questionable,
+                scope: Scope::Workshop,
             },
             entries: Vec::new(),
             pages: 0,
@@ -82,6 +147,10 @@ impl Browser {
             queue: VecDeque::new(),
             busy: 0,
             waiting: HashSet::new(),
+            heading: String::new(),
+            back: None,
+            updates: HashSet::new(),
+            checked: false,
         }
     }
 
@@ -94,10 +163,13 @@ impl Browser {
     }
 
     /// Adds a loaded page, skipping items already shown, and queues their previews.
-    pub fn add(&mut self, entries: Vec<Entry>) {
+    pub fn add(&mut self, page: Page) {
         self.pages += 1;
-        self.exhausted = entries.len() < PAGE / 2;
-        for entry in entries {
+        self.exhausted = page.last;
+        if let Some(author) = page.author {
+            self.heading = author;
+        }
+        for entry in page.entries {
             if !self.entries.iter().any(|known| known.id == entry.id) {
                 if !self.thumbs.contains_key(&entry.id) {
                     self.queue.push_back(entry.clone());
@@ -105,7 +177,8 @@ impl Browser {
                 self.entries.push(entry);
             }
         }
-        if self.selected.is_none() {
+        let shown = |id: &String| self.entries.iter().any(|entry| &entry.id == id);
+        if !self.selected.as_ref().is_some_and(shown) {
             self.selected = self.entries.first().map(|entry| entry.id.clone());
         }
     }
@@ -127,8 +200,12 @@ pub fn page_url(query: &Query, page: u32) -> String {
     } else {
         "textsearch"
     };
+    let section = match query.kind {
+        Type::Collections => "collections",
+        _ => "readytouseitems",
+    };
     let mut url = format!(
-        "https://steamcommunity.com/workshop/browse/?appid={APP}&section=readytouseitems&numperpage={PAGE}&p={page}&browsesort={sort}&actualsort={sort}"
+        "https://steamcommunity.com/workshop/browse/?appid={APP}&section={section}&numperpage={PAGE}&p={page}&browsesort={sort}&actualsort={sort}"
     );
     if sort == "trend" {
         url.push_str("&days=7");
@@ -136,12 +213,11 @@ pub fn page_url(query: &Query, page: u32) -> String {
     let tag = match query.kind {
         Type::Videos => Some("Video"),
         Type::Scenes => Some("Scene"),
-        Type::Everything => None,
+        Type::Everything | Type::Collections => None,
     };
-    for tag in tag
-        .into_iter()
-        .chain((!query.questionable).then_some("Everyone"))
-    {
+    // Collections carry no rating; what they hold is filtered when one is opened.
+    let rated = !query.questionable && query.kind != Type::Collections;
+    for tag in tag.into_iter().chain(rated.then_some("Everyone")) {
         url.push_str("&requiredtags%5B%5D=");
         url.push_str(tag);
     }
@@ -150,6 +226,12 @@ pub fn page_url(query: &Query, page: u32) -> String {
         url.push_str(&encode(search));
     }
     url
+}
+
+pub fn author_url(steamid: &str, page: u32) -> String {
+    format!(
+        "https://steamcommunity.com/profiles/{steamid}/myworkshopfiles/?appid={APP}&numperpage={PAGE}&p={page}"
+    )
 }
 
 fn encode(text: &str) -> String {
@@ -177,140 +259,52 @@ pub fn ids(html: &str) -> Vec<String> {
     found
 }
 
-#[derive(Deserialize)]
-struct Envelope {
-    response: Details,
+/// The name in an author's page title, `Steam Community :: name :: Workshop Items`.
+pub fn author_name(html: &str) -> Option<String> {
+    let title = html.split_once("<title>")?.1.split_once("</title>")?.0;
+    let parts: Vec<&str> = title.split(" :: ").collect();
+    let [_, name @ .., last] = parts.as_slice() else {
+        return None;
+    };
+    if name.is_empty() || !last.contains("Workshop") {
+        return None;
+    }
+    let name = name.join(" :: ");
+    let name = name.trim();
+    let name = name
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&");
+    (!name.is_empty()).then_some(name)
 }
 
-#[derive(Deserialize)]
-struct Details {
-    #[serde(default)]
-    publishedfiledetails: Vec<Detail>,
+/// Drops the oldest Workshop previews once they take more than their share of the disk.
+pub async fn prune_previews() {
+    let _ =
+        tokio::task::spawn_blocking(|| prune(&config::cache_dir().join("workshop"), PREVIEW_CACHE))
+            .await;
 }
 
-#[derive(Deserialize)]
-struct Detail {
-    publishedfileid: String,
-    result: i64,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    preview_url: String,
-    #[serde(default)]
-    file_size: serde_json::Value,
-    #[serde(default)]
-    time_updated: u64,
-    #[serde(default)]
-    subscriptions: u64,
-    #[serde(default)]
-    consumer_app_id: u64,
-    #[serde(default)]
-    tags: Vec<Tag>,
-}
-
-#[derive(Deserialize)]
-struct Tag {
-    tag: String,
-}
-
-/// Wallpaper Engine items from a details answer, without anything rated Mature, and
-/// without Questionable ones unless asked for.
-pub fn entries(json: &str, questionable: bool) -> Result<Vec<Entry>, String> {
-    let envelope: Envelope =
-        serde_json::from_str(json).map_err(|err| format!("Steam answered oddly: {err}"))?;
-    Ok(envelope
-        .response
-        .publishedfiledetails
+fn prune(folder: &Path, limit: u64) {
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = std::fs::read_dir(folder)
         .into_iter()
-        .filter(|detail| detail.result == 1 && detail.consumer_app_id.to_string() == APP)
-        .filter_map(|detail| {
-            let tags: Vec<String> = detail.tags.into_iter().map(|tag| tag.tag).collect();
-            let rated = |rating: &str| tags.iter().any(|tag| tag == rating);
-            if rated("Mature") || (rated("Questionable") && !questionable) {
-                return None;
-            }
-            let what = tags.iter().find_map(|tag| match tag.as_str() {
-                "Video" => Some(What::Video),
-                "Scene" => Some(What::Scene),
-                "Web" => Some(What::Web),
-                "Application" => Some(What::Program),
-                _ => None,
-            })?;
-            let readable = tags
-                .iter()
-                .filter(|tag| {
-                    !matches!(
-                        tag.as_str(),
-                        "Video"
-                            | "Scene"
-                            | "Web"
-                            | "Application"
-                            | "Wallpaper"
-                            | "Everyone"
-                            | "Questionable"
-                            | "Mature"
-                            | "Preset"
-                    )
-                })
-                .cloned()
-                .collect();
-            Some(Entry {
-                title: detail.title.trim().to_owned(),
-                preview: Some(detail.preview_url).filter(|url| url.starts_with("https://")),
-                what,
-                size: match &detail.file_size {
-                    serde_json::Value::String(size) => size.parse().unwrap_or(0),
-                    other => other.as_u64().unwrap_or(0),
-                },
-                subscriptions: detail.subscriptions,
-                updated: detail.time_updated,
-                tags: readable,
-                id: detail.publishedfileid,
-            })
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), entry.path()))
         })
-        .collect())
-}
-
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(20)))
-        .user_agent("apolline-wallpapers")
-        .build()
-        .into()
-}
-
-pub async fn browse(query: Query, page: u32) -> Result<Vec<Entry>, String> {
-    tokio::task::spawn_blocking(move || {
-        let agent = agent();
-        let html = agent
-            .get(page_url(&query, page))
-            .call()
-            .and_then(|mut answer| answer.body_mut().read_to_string())
-            .map_err(|err| format!("The Workshop didn't load: {err}"))?;
-        let ids = ids(&html);
-        if ids.is_empty() {
-            return Ok(Vec::new());
+        .collect();
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
+    let mut kept = 0;
+    for (_, size, path) in files {
+        kept += size;
+        if kept > limit {
+            let _ = std::fs::remove_file(path);
         }
-        let mut form = vec![("itemcount".to_owned(), ids.len().to_string())];
-        form.extend(
-            ids.iter()
-                .enumerate()
-                .map(|(at, id)| (format!("publishedfileids[{at}]"), id.clone())),
-        );
-        let json = agent
-            .post(DETAILS)
-            .send_form(form)
-            .and_then(|mut answer| answer.body_mut().read_to_string())
-            .map_err(|err| format!("The Workshop's details didn't load: {err}"))?;
-        let found = entries(&json, query.questionable)?;
-        // Keep the page's order, which is the order Steam sorted them in.
-        Ok(ids
-            .iter()
-            .filter_map(|id| found.iter().find(|entry| &entry.id == id).cloned())
-            .collect())
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    }
 }
 
 /// The item's Workshop preview, shrunk and cached by id and update time.
@@ -321,7 +315,7 @@ pub async fn preview(entry: Entry) -> (String, Option<Handle>) {
             .join("workshop")
             .join(format!("{}-{}.png", entry.id, entry.updated));
         if !cache.exists() {
-            let bytes = agent()
+            let bytes = api::agent()
                 .get(entry.preview.as_deref()?)
                 .call()
                 .ok()?
@@ -407,6 +401,7 @@ mod tests {
             kind,
             search: search.into(),
             questionable,
+            scope: Scope::Workshop,
         }
     }
 
@@ -428,6 +423,9 @@ mod tests {
         assert!(url.contains("browsesort=textsearch"), "{url}");
         assert!(url.ends_with("&searchtext=neon+city"), "{url}");
         assert!(!url.contains("requiredtags"), "{url}");
+        let url = page_url(&query(Sort::Newest, Type::Collections, "", false), 1);
+        assert!(url.contains("section=collections"), "{url}");
+        assert!(!url.contains("requiredtags"), "{url}");
         assert_eq!(encode("ночь & rain"), "%D0%BD%D0%BE%D1%87%D1%8C+%26+rain");
     }
 
@@ -440,31 +438,35 @@ mod tests {
     }
 
     #[test]
-    fn details_become_entries_and_ratings_filter_them() {
-        let json = r#"{"response":{"result":1,"resultcount":3,"publishedfiledetails":[
-            {"publishedfileid":"1","result":1,"title":" Snow leopard ","preview_url":"https://images.example/1/",
-             "file_size":"9370203","time_updated":1793296108,"subscriptions":3421,"consumer_app_id":431960,
-             "tags":[{"tag":"Video"},{"tag":"Animal"},{"tag":"Wallpaper"},{"tag":"1920 x 1080"},{"tag":"Everyone"}]},
-            {"publishedfileid":"2","result":1,"title":"Racing","file_size":"165969171","consumer_app_id":431960,
-             "tags":[{"tag":"Video"},{"tag":"Questionable"}]},
-            {"publishedfileid":"3","result":1,"title":"Night","consumer_app_id":431960,
-             "tags":[{"tag":"Scene"},{"tag":"Mature"}]},
-            {"publishedfileid":"4","result":9}]}}"#;
-        let shown = entries(json, false).unwrap();
-        assert_eq!(shown.len(), 1);
-        let leopard = &shown[0];
-        assert_eq!(
-            (leopard.title.as_str(), leopard.what, leopard.size),
-            ("Snow leopard", What::Video, 9_370_203)
-        );
-        assert_eq!(leopard.tags, ["Animal", "1920 x 1080"]);
-        let ids: Vec<String> = entries(json, true)
+    fn an_authors_name_comes_from_the_page_title() {
+        let html = "<head><title>Steam Community :: Tom &amp; Jerry :: Workshop Items</title>";
+        assert_eq!(author_name(html).as_deref(), Some("Tom & Jerry"));
+        assert_eq!(author_name("<title>Steam Community :: Error</title>"), None);
+    }
+
+    #[test]
+    fn the_preview_cache_keeps_the_newest_within_its_limit() {
+        let folder = std::env::temp_dir().join(format!("apolline-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        for (name, age) in [("old.png", 300), ("mid.png", 200), ("new.png", 100)] {
+            let path = folder.join(name);
+            std::fs::write(&path, [0u8; 10]).unwrap();
+            let time = SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        }
+        prune(&folder, 25);
+        let mut left: Vec<String> = std::fs::read_dir(&folder)
             .unwrap()
-            .into_iter()
-            .map(|e| e.id)
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
-        assert_eq!(ids, ["1", "2"]);
-        assert!(entries("<html>", false).unwrap_err().contains("oddly"));
+        left.sort();
+        assert_eq!(left, ["mid.png", "new.png"]);
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]

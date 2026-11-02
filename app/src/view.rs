@@ -1,5 +1,6 @@
 mod look;
 mod shop;
+mod steam;
 
 use apolline_wall_protocol::protocol::Fit;
 use iced::widget::{
@@ -472,6 +473,7 @@ fn settings(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::Center)
             .into()
         ),
+        section("Steam account", steam::account(app)),
         section(
             "Tray",
             row![
@@ -496,6 +498,12 @@ fn settings(app: &App) -> Element<'_, Message> {
     ]
     .spacing(26)
     .max_width(720);
+    let page = match &app.notice {
+        Some(notice) => column![notice_line(notice), page]
+            .spacing(16)
+            .max_width(720),
+        None => page,
+    };
     scrollable(container(page).padding([4, 4]))
         .direction(style::thin())
         .style(style::scroller)

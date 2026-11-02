@@ -3,8 +3,8 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::config;
 use crate::library::{self, Item, What};
+use crate::{config, steamcmd};
 
 /// Wallpaper Engine's Steam app id; its Workshop downloads land in a folder with this name.
 const APP: &str = "431960";
@@ -21,8 +21,9 @@ struct Project {
     preview: String,
 }
 
-/// Every place Steam keeps Wallpaper Engine's wallpapers: Workshop subscriptions and the
-/// projects that ship with it or that you made, in every Steam library on this machine.
+/// Every place Wallpaper Engine's wallpapers are on this machine: Workshop subscriptions and
+/// the projects that ship with it or that you made, in every Steam library, and what
+/// steamcmd downloaded for this app.
 pub fn folders() -> Vec<PathBuf> {
     let home = config::home();
     let roots = [
@@ -31,7 +32,9 @@ pub fn folders() -> Vec<PathBuf> {
         ".var/app/com.valvesoftware.Steam/.local/share/Steam",
     ]
     .map(|root| home.join(root));
-    folders_in(&libraries(&roots))
+    let mut found = folders_in(&libraries(&roots));
+    found.extend(Some(steamcmd::content()).filter(|folder| folder.is_dir()));
+    found
 }
 
 fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {

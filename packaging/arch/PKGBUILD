@@ -14,6 +14,7 @@ optdepends=(
   'vulkan-icd-loader: faster drawing for the Wallpapers app'
   'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
   'linux-wallpaperengine-git: Wallpaper Engine scenes and web wallpapers'
+  'steamcmd: Workshop downloads without the Steam client'
 )
 makedepends=('cargo' 'git')
 provides=("$_name")
