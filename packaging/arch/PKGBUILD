@@ -15,6 +15,7 @@ optdepends=(
   'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
   'linux-wallpaperengine-git: Wallpaper Engine scenes and web wallpapers'
   'steamcmd: Workshop downloads without the Steam client'
+  'libx11: X11 sessions, and GNOME without its extension through Xwayland'
 )
 makedepends=('cargo' 'git')
 provides=("$_name")
@@ -55,6 +56,8 @@ package() {
   install -Dm644 packaging/apolline-wall.service "$pkgdir/usr/lib/systemd/user/apolline-wall.service"
   install -Dm644 packaging/apolline-wallpapers.desktop "$pkgdir/usr/share/applications/apolline-wallpapers.desktop"
   install -Dm644 tests/shaders/hills.frag "$pkgdir/usr/share/apolline-wall/wallpapers/hills.frag"
+  local extension=apolline-wall@pisosenie.github.io
+  install -Dm644 -t "$pkgdir/usr/share/gnome-shell/extensions/$extension" gnome/$extension/{metadata.json,extension.js}
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"

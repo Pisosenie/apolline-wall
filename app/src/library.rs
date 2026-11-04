@@ -53,14 +53,22 @@ impl What {
         match self {
             What::Picture | What::Video | What::Shader => None,
             What::Scene | What::Web if renderer() => None,
-            What::Scene | What::Web => Some(
-                "Scenes and web wallpapers are drawn by linux-wallpaperengine: install linux-wallpaperengine-git from the AUR, and keep Wallpaper Engine in Steam for its assets. Its videos work without it.",
-            ),
+            What::Scene | What::Web => Some(no_renderer()),
             What::Program => Some(
                 "Wallpaper Engine application wallpapers are Windows programs and won't run here.",
             ),
         }
     }
+}
+
+fn no_renderer() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| {
+        format!(
+            "Scenes and web wallpapers are drawn by linux-wallpaperengine: {}, and keep Wallpaper Engine in Steam for its assets. Its videos work without it.",
+            apolline_wall_protocol::install::hint(apolline_wall_protocol::install::Need::SceneRenderer)
+        )
+    })
 }
 
 /// Whether the program that draws Wallpaper Engine's scenes is installed.

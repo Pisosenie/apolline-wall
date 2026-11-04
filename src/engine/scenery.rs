@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use apolline_wall_protocol::install::{self, Need};
+
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay_client_toolkit::shell::WaylandSurface;
 
-use super::{App, Picture};
+use super::{App, Picture, Surface};
 use crate::protocol::{self, Event, Fit, Show};
 
 /// linux-wallpaperengine draws Wallpaper Engine's scenes and web wallpapers; another program
@@ -143,33 +144,35 @@ impl App {
         }
     }
 
-    /// Unmaps our surface so the renderer's, on the same layer, is what shows.
+    /// Takes our surface away so the renderer's is what shows.
     fn hide(&mut self, index: usize) {
-        let screen = &mut self.screens[index];
-        drop(screen.target.take());
-        let surface = screen.layer.wl_surface();
-        surface.attach(None, 0, 0);
-        surface.commit();
-        screen.hidden = true;
+        drop(self.screens[index].target.take());
+        match &self.screens[index].surface {
+            Surface::Wayland(_) => self.wayland_hide(index),
+            Surface::X11(window) => self.x11_hide(window.id()),
+        }
+        self.screens[index].hidden = true;
     }
 
-    /// Comes back on a fresh surface: compositors differ on mapping one that was unmapped,
-    /// but every one configures a new surface, and drawing resumes from there.
     pub(super) fn unhide(&mut self, index: usize) {
         if !self.screens[index].hidden {
             return;
         }
-        let output = self.screens[index].output.clone();
-        let (layer, viewport) = self.open_layer(&self.qh, &output);
-        let screen = &mut self.screens[index];
-        drop(screen.target.take());
-        if let Some(old) = std::mem::replace(&mut screen.viewport, viewport) {
-            old.destroy();
+        drop(self.screens[index].target.take());
+        let x11 = match &self.screens[index].surface {
+            Surface::Wayland(_) => None,
+            Surface::X11(window) => Some(window.id()),
+        };
+        match x11 {
+            None => self.wayland_reopen(index),
+            Some(id) => self.x11_show(id),
         }
-        screen.layer = layer;
-        screen.logical = None;
+        let screen = &mut self.screens[index];
         screen.frame_pending = false;
         screen.hidden = false;
+        if x11.is_some() {
+            self.place(index);
+        }
     }
 }
 
@@ -204,7 +207,8 @@ fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<i3
     }
     let mut child = command.spawn().map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => format!(
-            "Wallpaper Engine scenes need {RENDERER}: install linux-wallpaperengine-git from the AUR"
+            "Wallpaper Engine scenes need {RENDERER}: {}",
+            install::hint(Need::SceneRenderer)
         ),
         _ => format!("{}: {err}", PathBuf::from(&program).display()),
     })?;

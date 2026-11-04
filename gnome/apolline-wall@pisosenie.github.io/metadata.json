@@ -1,0 +1,7 @@
+{
+  "uuid": "apolline-wall@pisosenie.github.io",
+  "name": "apolline-wall",
+  "description": "Puts apolline-wall's live wallpapers behind your windows. GNOME has no background layer of its own for them.",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": "https://github.com/Pisosenie/apolline-wall"
+}

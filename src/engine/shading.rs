@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
 
 use super::{App, Picture, Scene, poster_path};
 use crate::gl::{self, Gl};
@@ -110,19 +109,19 @@ impl App {
             self.step(index);
         } else if !scene.timer {
             scene.timer = true;
-            let output = self.screens[index].output.clone();
+            let id = self.screens[index].id;
             let timer = Timer::from_duration(wait);
             let _ = self
                 .handle
                 .insert_source(timer, move |_, _, app: &mut App| {
-                    app.scene_due(&output);
+                    app.scene_due(id);
                     TimeoutAction::Drop
                 });
         }
     }
 
-    fn scene_due(&mut self, output: &WlOutput) {
-        let Some(index) = self.screens.iter().position(|s| &s.output == output) else {
+    fn scene_due(&mut self, id: u64) {
+        let Some(index) = self.index_of(id) else {
             return;
         };
         let Some(Picture::Shader(scene)) = self.screens[index]

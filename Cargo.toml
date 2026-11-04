@@ -24,8 +24,10 @@ toml = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }
 wayland-backend = { version = "0.3", features = ["client_system"] }
-glutin = { version = "0.32", default-features = false, features = ["egl", "wayland"] }
+glutin = { version = "0.32", default-features = false, features = ["egl", "wayland", "x11"] }
 glow = "0.16"
 raw-window-handle = "0.6"
 libc = "0.2"
 libloading = "0.8"
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "dl-libxcb", "randr"] }
+x11-dl = "2"

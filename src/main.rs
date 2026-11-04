@@ -2,6 +2,8 @@ use apolline_wall_protocol::protocol;
 
 mod cli;
 #[cfg(target_os = "linux")]
+mod engine;
+#[cfg(target_os = "linux")]
 mod gl;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod picture;
@@ -9,8 +11,6 @@ mod picture;
 mod state;
 #[cfg(target_os = "linux")]
 mod video;
-#[cfg(target_os = "linux")]
-mod wayland;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,14 +27,14 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn serve(daemon: bool) -> Result<(), String> {
-    wayland::run(if daemon {
-        wayland::Mode::Daemon
+    engine::run(if daemon {
+        engine::Mode::Daemon
     } else {
-        wayland::Mode::Child
+        engine::Mode::Child
     })
 }
 
 #[cfg(not(target_os = "linux"))]
 fn serve(_: bool) -> Result<(), String> {
-    Err("it draws on Wayland, so it needs Linux".into())
+    Err("it draws on Wayland or X11, so it needs Linux".into())
 }

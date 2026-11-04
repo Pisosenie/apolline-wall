@@ -48,7 +48,7 @@ impl App {
         };
         self.gl.current()?;
         Ok(Video {
-            player: Player::new(&mpv, source, self.gl.display(), self.wl_display, &self.wake)?,
+            player: Player::new(&mpv, source, self.gl.display(), self.platform, &self.wake)?,
             canvas: None,
             size: None,
             started: false,

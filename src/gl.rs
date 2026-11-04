@@ -1,8 +1,6 @@
 mod shader;
 
-use std::ffi::c_void;
 use std::num::NonZeroU32;
-use std::ptr::NonNull;
 
 use glow::HasContext;
 use glutin::api::egl::config::Config;
@@ -13,9 +11,7 @@ use glutin::config::{Api, ConfigTemplateBuilder, GlConfig};
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentGlContext, Version};
 use glutin::display::GlDisplay;
 use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
-use raw_window_handle::{
-    RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
-};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::picture::{self, Pixels, Uv};
 use crate::protocol::Look;
@@ -119,10 +115,9 @@ impl Canvas {
 }
 
 impl Gl {
-    pub fn new(wl_display: *mut c_void) -> Result<Self, String> {
-        let handle = WaylandDisplayHandle::new(NonNull::new(wl_display).ok_or("no wl_display")?);
-        let display = unsafe { Display::new(RawDisplayHandle::Wayland(handle)) }
-            .map_err(|err| format!("EGL: {err}"))?;
+    /// A GLES 3 context on the session's display, Wayland's or X11's.
+    pub fn new(handle: RawDisplayHandle) -> Result<Self, String> {
+        let display = unsafe { Display::new(handle) }.map_err(|err| format!("EGL: {err}"))?;
         let template = ConfigTemplateBuilder::new().with_api(Api::GLES3).build();
         let config = unsafe { display.find_configs(template) }
             .map_err(|err| format!("EGL configs: {err}"))?
@@ -159,14 +154,9 @@ impl Gl {
             .map_err(|err| err.to_string())
     }
 
-    pub fn target(&self, wl_surface: *mut c_void, size: (u32, u32)) -> Result<Target, String> {
-        let handle = WaylandWindowHandle::new(NonNull::new(wl_surface).ok_or("no wl_surface")?);
+    pub fn target(&self, window: RawWindowHandle, size: (u32, u32)) -> Result<Target, String> {
         let (w, h) = nonzero(size)?;
-        let attributes = SurfaceAttributesBuilder::<WindowSurface>::new().build(
-            RawWindowHandle::Wayland(handle),
-            w,
-            h,
-        );
+        let attributes = SurfaceAttributesBuilder::<WindowSurface>::new().build(window, w, h);
         let surface = unsafe {
             self.display
                 .create_window_surface(&self.config, &attributes)

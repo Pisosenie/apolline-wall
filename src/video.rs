@@ -4,6 +4,7 @@ use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
 
+use apolline_wall_protocol::install::{self, Need};
 use glutin::api::egl::display::Display;
 use glutin::display::GlDisplay;
 use libloading::Library;
@@ -14,7 +15,16 @@ const PARAM_API_TYPE: c_int = 1;
 const PARAM_OPENGL_INIT_PARAMS: c_int = 2;
 const PARAM_OPENGL_FBO: c_int = 3;
 const PARAM_FLIP_Y: c_int = 4;
+const PARAM_X11_DISPLAY: c_int = 8;
 const PARAM_WL_DISPLAY: c_int = 9;
+
+/// The display libmpv's hardware decoding works with.
+#[derive(Clone, Copy)]
+pub enum Platform {
+    Wayland(*mut c_void),
+    /// An Xlib `Display`.
+    X11(*mut c_void),
+}
 const UPDATE_FRAME: u64 = 1;
 const EVENT_NONE: c_int = 0;
 const EVENT_SHUTDOWN: c_int = 1;
@@ -91,7 +101,7 @@ impl Mpv {
         let library = ["libmpv.so.2", "libmpv.so"]
             .iter()
             .find_map(|name| unsafe { Library::new(name) }.ok())
-            .ok_or("videos need libmpv; install mpv")?;
+            .ok_or_else(|| format!("videos need libmpv: {}", install::hint(Need::Mpv)))?;
         unsafe {
             Ok(Rc::new(Self {
                 create: symbol(&library, "mpv_create")?,
@@ -153,7 +163,7 @@ impl Player {
         mpv: &Rc<Mpv>,
         source: &Path,
         display: &Display,
-        wl_display: *mut c_void,
+        platform: Platform,
         wake: &Ping,
     ) -> Result<Self, String> {
         let handle = unsafe { (mpv.create)() };
@@ -185,7 +195,7 @@ impl Player {
             })?;
         }
         player.check(unsafe { (mpv.initialize)(handle) })?;
-        player.render = player.render_context(wl_display)?;
+        player.render = player.render_context(platform)?;
         let wake = &*player.wake as *const Ping as *mut c_void;
         unsafe {
             (mpv.render_set_update_callback)(player.render, Some(ping), wake);
@@ -198,7 +208,7 @@ impl Player {
         Ok(player)
     }
 
-    fn render_context(&self, wl_display: *mut c_void) -> Result<*mut RenderContext, String> {
+    fn render_context(&self, platform: Platform) -> Result<*mut RenderContext, String> {
         let api = c("opengl");
         let mut init = GlInit {
             get_proc_address: proc_address,
@@ -207,7 +217,10 @@ impl Player {
         let mut params = [
             param(PARAM_API_TYPE, api.as_ptr().cast_mut().cast()),
             param(PARAM_OPENGL_INIT_PARAMS, (&raw mut init).cast()),
-            param(PARAM_WL_DISPLAY, wl_display),
+            match platform {
+                Platform::Wayland(display) => param(PARAM_WL_DISPLAY, display),
+                Platform::X11(display) => param(PARAM_X11_DISPLAY, display),
+            },
             param(PARAM_INVALID, ptr::null_mut()),
         ];
         let mut render = ptr::null_mut();

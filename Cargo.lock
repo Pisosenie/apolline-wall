@@ -121,6 +121,8 @@ dependencies = [
  "smithay-client-toolkit 0.20.0",
  "toml",
  "wayland-backend",
+ "x11-dl",
+ "x11rb",
 ]
 
 [[package]]
@@ -1369,6 +1371,7 @@ dependencies = [
  "once_cell",
  "raw-window-handle",
  "wayland-sys",
+ "x11-dl",
 ]
 
 [[package]]

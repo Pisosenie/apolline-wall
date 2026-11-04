@@ -1,3 +1,4 @@
+use apolline_wall_protocol::install::{self, Need};
 use iced::widget::{Row, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 
@@ -8,9 +9,10 @@ use crate::{App, Message, style};
 /// The Steam account steamcmd downloads with, for Settings.
 pub fn account(app: &App) -> Element<'_, Message> {
     if !steamcmd::installed() {
-        return text(
-            "Without the Steam client, Workshop downloads go through steamcmd: install steamcmd from the AUR, then sign in here with an account that owns Wallpaper Engine.",
-        )
+        return text(format!(
+            "Without the Steam client, Workshop downloads go through steamcmd: {}, then sign in here with an account that owns Wallpaper Engine.",
+            install::hint(Need::Steamcmd)
+        ))
         .size(12)
         .color(style::FAINT)
         .into();

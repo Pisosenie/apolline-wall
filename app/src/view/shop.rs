@@ -341,7 +341,7 @@ fn offer(app: &App, entry: &Entry, what: What) -> Offer {
     if !steamcmd::installed() {
         return (
             Some(
-                "Getting it takes the Steam client with Wallpaper Engine, or steamcmd from the AUR and a Steam account that owns Wallpaper Engine.",
+                "Getting it takes the Steam client with Wallpaper Engine, or steamcmd and a Steam account that owns Wallpaper Engine; Settings says how to get steamcmd.",
             ),
             "Not available yet",
             None,

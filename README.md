@@ -1,6 +1,6 @@
 # apolline-wall
 
-Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Engine's wallpapers, its scenes included, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for what comes next.
+Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Engine's wallpapers, its scenes included, on every monitor, crossfading between them and costing nothing while nothing shows. It draws on its own layer-shell surface per monitor with GLES, at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC; on GNOME, which has no such layer, its Shell extension in `gnome/` puts a window per monitor behind everything instead, and in X11 sessions it draws in a desktop window per monitor. It is also the wallpaper process of [Apolline](https://github.com/Pisosenie/apolline), which starts it and drives it, so video decoding never ends up inside the shell. Arch first; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for what comes next.
 
 ## Using it
 
@@ -12,6 +12,7 @@ Install `apolline-wall-git` from the AUR (or `packaging/arch` here), stop whatev
 | Hyprland | `exec-once = apolline-wall daemon` |
 | sway | `exec apolline-wall daemon` |
 | any session with systemd's `graphical-session.target` | `systemctl --user enable --now apolline-wall` |
+| GNOME | `gnome-extensions enable apolline-wall@pisosenie.github.io`, log out and back in, then the systemd line above |
 
 Then pick wallpapers in the **Wallpapers** app (`apolline-wallpapers`), or from a terminal:
 
@@ -98,7 +99,7 @@ tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screensho
 
 ## Next
 
-A wallpaper's own properties, playlists and battery rules, then KDE, GNOME and X11, a scene renderer of our own and other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+A wallpaper's own properties, playlists and battery rules, a first run on GNOME, KDE and X11, a scene renderer of our own and other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## License
 

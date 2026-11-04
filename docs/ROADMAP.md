@@ -9,8 +9,8 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 | niri, Hyprland, sway, river, labwc, Wayfire, COSMIC | layer-shell's background layer | now |
 | Apolline | the shell starts it as a child and drives it over stdin | wired on Apolline's `wall` branch, parked |
 | KDE Plasma | plasmashell paints its desktop above the background layer, so on KWin it takes the bottom layer instead, or a Plasma wallpaper plugin leaves the desktop transparent | step 3 |
-| GNOME | no layer-shell: a regular window that a small Shell extension pins behind everything, the way Hanabi does | step 3 |
-| X11 sessions | a desktop-type window per monitor | step 3 |
+| GNOME | no layer-shell: a window per monitor that apolline-wall's Shell extension (`gnome/`) puts behind every window, on every workspace, out of the overview and Alt+Tab; without the extension, an X11 desktop window through Xwayland | written, not yet run on GNOME |
+| X11 sessions (Xfce, Cinnamon, MATE, i3, Openbox…) | a `_NET_WM_WINDOW_TYPE_DESKTOP` window per RandR monitor, below, sticky, out of taskbars and pagers | written, not yet run on X11 |
 
 ## Done
 
@@ -50,7 +50,11 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - "Not working? Report it" on a wallpaper, with a diagnostics file that has home paths and user names removed.
 
 ### 3. Every desktop
-- KDE Plasma, GNOME and X11 as in the table above, each tested in a VM before it's called supported.
+- GNOME is written: without layer-shell the daemon opens an xdg window per monitor, titled `apolline-wall:<connector>`, but only if its Shell extension is enabled, so it never covers the desktop. It needs a first run on GNOME 45–49.
+- X11 is written. The daemon is now an engine (pictures, videos, shaders, fades, the protocol) and two drivers that own the surfaces and frame pacing: Wayland (layer-shell, or GNOME's windows) and X11 (a desktop window per RandR monitor, EGL through Xlib, a 16 ms timer where Wayland has frame callbacks, libmpv told the X display). Wayland comes first; a Wayland session that can't host a background falls back to Xwayland. It needs a first run on an X11 session, and on desktops that draw their own icons window (xfdesktop, Nemo, Caja) whether ours stays under it.
+- Still to do on X11: pausing under a fullscreen window, since X11 sends no frame callbacks to stop.
+- KDE Plasma: KWin has layer-shell; whether plasmashell's desktop stays above our background surface needs a run on Plasma 6, and a Plasma wallpaper plugin is the fallback.
+- Each tested on its desktop before it's called supported.
 - Settings keyed by the monitor itself (make, model, serial), not by its connector. DP-1 can become DP-2 after a replug.
 
 ### 4. Rules
@@ -61,8 +65,8 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - Under Apolline these come from its modes instead.
 
 ### 5. Scenes of our own
-- Until then `linux-wallpaperengine` draws them, and a new `fps` limit reaches a scene only when it starts again; looks and speed don't apply to them.
-- A scene renderer of our own on GLES, translating Wallpaper Engine's shaders with naga, written clean-room. Then scenes get looks, crossfades and one process for everything.
+- The renderer is its own library, [apolline-scene](https://github.com/Pisosenie/apolline-scene), written clean-room on GLES; its plan is in its `docs/PLAN.md`. The daemon links it and draws scenes in its own context, so scenes get looks, crossfades and one process for everything.
+- Until it draws a scene, `linux-wallpaperengine` does, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
 
 ### 6. Every distribution
 - The AUR first. Then Fedora COPR, Debian and Ubuntu packages, and a Flatpak if the sandbox allows layer-shell.

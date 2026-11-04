@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use apolline_wall_protocol::install::{self, Need};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 
 use crate::config;
@@ -172,10 +173,10 @@ fn run(
     let mut child = command(setup, job, account, &slave)?
         .spawn()
         .map_err(|err| match err.kind() {
-            std::io::ErrorKind::NotFound => {
-                "Downloads without the Steam client need steamcmd: install steamcmd from the AUR."
-                    .to_owned()
-            }
+            std::io::ErrorKind::NotFound => format!(
+                "Downloads without the Steam client need steamcmd: {}.",
+                install::hint(Need::Steamcmd)
+            ),
             _ => format!("steamcmd: {err}"),
         })?;
     drop(slave);
