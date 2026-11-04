@@ -1,0 +1,13 @@
+[package]
+name = "vpointer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Moves and clicks a virtual pointer on a wlroots compositor, for driving the app under a headless sway in tests"
+
+# Not part of the workspace: a test tool, built on its own.
+[workspace]
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
