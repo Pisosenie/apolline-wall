@@ -107,23 +107,6 @@ A project outside the native subset, or a web wallpaper, is drawn by [linux-wall
 - Changes to and from an externally rendered project don't crossfade.
 - `APOLLINE_WALL_SCENE_RENDERER` names another program that takes the same arguments; the tests use [`tests/scenes/stand-in.sh`](tests/scenes/stand-in.sh).
 
-## Trying it
-
-```sh
-cargo build --release
-tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screenshot per step
-```
-
-`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture. With swaybg installed a stand-in plays linux-wallpaperengine's part: a scene shows, its process stops while paused and is gone after the next wallpaper, and one that crashes leaves the desktop as it was.
-
-## Next
-
-Effect chains and animation in the native scene renderer, real Workshop corpus checks, GNOME/KDE/X11 validation, stable monitor identities and packages for other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
-
-## License
-
-MIT or Apache-2.0, at your option.
-
 ## Favorites and rotation
 
 Add a wallpaper to Favorites from its inspector. The Favorites filter and search can be
@@ -387,3 +370,20 @@ failure. Stale generations remain ignored. Updating an active native scene's par
 its animation phase and excludes preparation delay from its clock; changing sources starts a
 new clock. Native frames do not compute Shadertoy date uniforms or redraw for unused accent
 changes. GL draw errors remain playback failures, separate from preview-cache errors.
+
+## Trying it
+
+```sh
+cargo build --release
+tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screenshot per step
+```
+
+`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture. With swaybg installed a stand-in plays linux-wallpaperengine's part: a scene shows, its process stops while paused and is gone after the next wallpaper, and one that crashes leaves the desktop as it was.
+
+## Next
+
+Effect chains and animation in the native scene renderer, real Workshop corpus checks, GNOME/KDE/X11 validation, stable monitor identities and packages for other distributions. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## License
+
+MIT or Apache-2.0, at your option.
