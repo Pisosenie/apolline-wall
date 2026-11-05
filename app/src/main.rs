@@ -4,6 +4,7 @@ mod daemon;
 mod download;
 mod engine;
 mod library;
+mod presets;
 mod preview;
 mod properties;
 mod report;
@@ -113,6 +114,8 @@ pub struct App {
     pub notice: Option<String>,
     /// What went wrong lately, newest last, for a problem report.
     errors: VecDeque<String>,
+    /// What the next property preset will be called.
+    pub preset_name: String,
     pub folder: String,
     pub fps: u32,
     pub scale: f32,
@@ -158,6 +161,7 @@ pub enum Message {
     /// The daemon's answer to a wallpaper applied with these properties, by its path.
     /// Saves a problem report about the picked wallpaper.
     Report,
+    Preset(presets::Preset),
     Applied(
         String,
         apolline_scene::properties::Values,
@@ -213,6 +217,7 @@ impl App {
             daemon: None,
             notice: None,
             errors: VecDeque::new(),
+            preset_name: String::new(),
             folder: String::new(),
             fps: 30,
             scale: 1.0,
@@ -261,6 +266,7 @@ impl App {
             }
             Message::Preview(action) => self.preview(action),
             Message::Properties(action) => self.properties(action),
+            Message::Preset(preset) => self.preset(preset),
             Message::Scanned(items) => {
                 self.queue = items
                     .iter()

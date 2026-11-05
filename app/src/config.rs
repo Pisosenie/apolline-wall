@@ -24,6 +24,9 @@ pub struct Config {
     pub look_presets: BTreeMap<String, Look>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub wallpaper_properties: BTreeMap<String, apolline_scene::properties::Values>,
+    /// Named sets of property values, by wallpaper path, then by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub property_presets: BTreeMap<String, BTreeMap<String, apolline_scene::properties::Values>>,
     /// The Steam account steamcmd signs in with; its password is never kept here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steam_account: Option<String>,
@@ -39,6 +42,7 @@ impl Default for Config {
             looks: BTreeMap::new(),
             look_presets: BTreeMap::new(),
             wallpaper_properties: BTreeMap::new(),
+            property_presets: BTreeMap::new(),
             steam_account: None,
         }
     }

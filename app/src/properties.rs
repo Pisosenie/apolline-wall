@@ -119,6 +119,23 @@ impl App {
 }
 
 impl Editor {
+    /// Takes a whole set of values, a preset's or pasted ones, keeping only what this
+    /// wallpaper has and can hold.
+    pub fn take(&mut self, values: &Values) {
+        let Some(schema) = &self.schema else {
+            return;
+        };
+        let Ok(resolved) = schema.resolve(values) else {
+            return;
+        };
+        self.values.clear();
+        for (key, value) in resolved {
+            self.store(key, value);
+        }
+        self.sync_colors();
+        self.validate();
+    }
+
     fn sync_colors(&mut self) {
         self.colors.clear();
         if let Some(schema) = &self.schema {
@@ -277,12 +294,40 @@ pub fn controls(app: &App) -> Element<'_, Message> {
                 .style(style::secondary)
                 .on_press(Message::Properties(Action::Reset)),
         )
+        .push(crate::presets::view(app))
         .into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_taken_set_keeps_what_the_wallpaper_has_and_drops_defaults() {
+        let schema = Schema::parse(&json!({"general": {"properties": {
+            "show": {"type": "bool", "value": true},
+            "tint": {"type": "color", "value": "1 1 1"}
+        }}}))
+        .unwrap();
+        let mut editor = Editor {
+            schema: Some(schema),
+            ..Editor::default()
+        };
+        editor.take(&Values::from([
+            ("show".into(), json!(true)),
+            ("tint".into(), json!("1 0 0")),
+            ("gone".into(), json!(5)),
+        ]));
+        assert_eq!(
+            editor.values,
+            Values::from([("tint".into(), json!("1 0 0"))])
+        );
+        assert_eq!(
+            editor.colors.get("tint").map(String::as_str),
+            Some("#ff0000")
+        );
+        assert!(editor.error.is_none());
+    }
+
     #[test]
     fn changing_another_property_does_not_clear_an_invalid_color() {
         let mut editor = Editor {

@@ -44,7 +44,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - The content stays its authors'. Nothing is redistributed.
 
 ### 2. Properties and the rest of the app
-- Wallpaper Engine `general.properties` controls are implemented for bool, slider, color, combo and text. Still needed: named property presets with export/import, `wallpaper.toml`, scripts/conditions and animated preview of property edits.
+- Wallpaper Engine `general.properties` controls are implemented for bool, slider, color, combo and text, with named presets per wallpaper and values copied to and pasted from the clipboard as JSON. Still needed: `wallpaper.toml`, scripts/conditions and animated preview of property edits.
 - `fit: "blur"` shows a picture or video whole and fills the edges it leaves with a blurred, dimmed copy of itself: on the CPU once for pictures, in the composite shader for videos. Scenes still show plain edges with it.
 - Favorites and ordered per-monitor/shared playlists are implemented. Still needed: user collections and monitor layout selection. Previous/next/stop and live playlist summaries are now available in the tray and playback cards; graphical verification remains pending.
 - "Not working? Report it" in the inspector saves a plain-text report to Downloads and opens the folder: the wallpaper and what it is, the distribution and session, which of mpv, ffmpeg, linux-wallpaperengine, steamcmd and Steam are installed, what the daemon shows, and its last errors, with the home folder and the user's name taken out.
