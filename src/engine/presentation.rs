@@ -83,6 +83,7 @@ impl App {
     }
 
     pub(super) fn present(&mut self, index: usize, picture: Picture, loading: Loading) {
+        self.showing(loading.show.source.clone());
         if let Some(persist) = &mut self.persist {
             persist.good.confirm(&loading.show, &persist.state);
         }

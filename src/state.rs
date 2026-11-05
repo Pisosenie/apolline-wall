@@ -27,6 +27,9 @@ pub struct State {
     /// and usually a serial), so its settings follow it to another connector.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub monitors: BTreeMap<String, String>,
+    /// How many runs in a row each wallpaper was loading or just showing when the daemon died.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub crashes: BTreeMap<String, u32>,
 }
 
 /// Connectors remembered for monitors: a desk's worth and some docks, not a history.
@@ -75,6 +78,18 @@ impl State {
             .filter(|(seen, known)| known.as_str() == identity && seen.as_str() != connector);
         let (old, _) = before.next()?;
         (before.next().is_none() && !connected.contains(&old.as_str())).then(|| old.clone())
+    }
+
+    /// Stops showing a wallpaper anywhere at the next login.
+    pub fn forget(&mut self, source: &Path) {
+        if self
+            .wallpaper
+            .as_ref()
+            .is_some_and(|saved| saved.source == source)
+        {
+            self.wallpaper = None;
+        }
+        self.outputs.retain(|_, saved| saved.source != source);
     }
 
     /// Moves a connector's wallpaper and playlist to another.
@@ -348,6 +363,18 @@ pub fn save(path: &Path, state: &State) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::protocol::Pause;
+
+    #[test]
+    fn a_forgotten_wallpaper_leaves_every_monitor_that_had_it() {
+        let mut state = State::default();
+        state.record(&show(None, "/w/crash.frag"));
+        state.record(&show(Some("DP-1"), "/w/crash.frag"));
+        state.record(&show(Some("DP-2"), "/w/fine.jpg"));
+        state.forget(Path::new("/w/crash.frag"));
+        assert!(state.wallpaper.is_none());
+        assert!(!state.outputs.contains_key("DP-1"));
+        assert_eq!(state.outputs["DP-2"].source, PathBuf::from("/w/fine.jpg"));
+    }
 
     #[test]
     fn a_monitor_takes_its_wallpaper_and_playlist_to_another_connector() {

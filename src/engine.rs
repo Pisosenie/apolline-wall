@@ -1,3 +1,4 @@
+mod crashes;
 mod diagnostics;
 mod monitors;
 mod native;
@@ -160,6 +161,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         accent: shading::DEFAULT_ACCENT,
         persist: None,
         rotations: HashMap::new(),
+        trying: Default::default(),
         rotation_timer: None,
         generation: 0,
         next_screen: 0,
@@ -167,6 +169,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
     };
     if let Mode::Daemon = mode {
         app.persist = restore(&mut app);
+        app.recover();
     }
     app.discover();
     while !app.exit {
@@ -184,6 +187,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         }
         app.flush();
     }
+    app.done_trying();
     app.close_videos();
     app.close_externals();
     let _ = std::fs::remove_file(protocol::socket_path());
@@ -291,6 +295,7 @@ struct App {
     accent: [f32; 3],
     persist: Option<Persist>,
     rotations: HashMap<Option<String>, rotation::Rotation>,
+    trying: crashes::Trying,
     rotation_timer: Option<smithay_client_toolkit::reexports::calloop::RegistrationToken>,
     generation: u64,
     next_screen: u64,
@@ -440,6 +445,7 @@ impl App {
                         screen.failed = None;
                     }
                 }
+                self.forgive(&show.source);
                 self.selection.set(show);
                 self.refresh();
             }
@@ -613,6 +619,7 @@ impl App {
         for (source, jobs) in jobs {
             let _ = self.decoder.send(Batch { source, jobs });
         }
+        self.note_trying();
         for index in videos {
             self.start_video(index);
         }
@@ -661,6 +668,8 @@ impl App {
             // Not from inside whatever load or draw is failing right now.
             let _ = self.handle.insert_idle(|app| app.refresh());
         }
+        // A wallpaper that failed on its own didn't take the daemon down.
+        self.note_trying();
         protocol::emit(&self.status());
     }
 

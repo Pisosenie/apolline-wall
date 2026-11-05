@@ -61,7 +61,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - Implemented: independent manual, logind/shell lock, sleep, battery and X11 fullscreen pause reasons. Battery reduction caps shader FPS and resolution without raising or overwriting user limits. Audio rules are still pending.
 - UPower and logind follow D-Bus signals. A service that isn't on the bus is waited for through `NameOwnerChanged`, with no polling, and what it said last is cleared when it goes. Lock requires LockedHint reporting or the shell hook. A sleep delay inhibitor bounds pause acknowledgement. Real battery, sleep and lock transitions still need verification; there is no automatic poster-only mode yet.
 - Ordered playlists run per monitor or on a shared clock, persist across restart and suspend while a participating monitor is paused. Folder feeds, collections, login rules and sunrise/sunset variants remain pending.
-- Reported wallpaper load/playback failures are skipped for the lifetime of the running playlist; exhausted lists stop without retry timers, and manual selection permits retry. Detecting and persisting repeated crashes of the daemon itself remains pending.
+- Reported wallpaper load/playback failures are skipped for the lifetime of the running playlist; exhausted lists stop without retry timers, and manual selection permits retry. A wallpaper the daemon dies with twice in a row, while it loads or in its first ten seconds on screen, is skipped at the next start with an error saying so, until it's set again.
 - Apolline can supply lock state through the session command. Its integration is maintained separately and still needs wiring and verification.
 
 ### 5. Scenes of our own
