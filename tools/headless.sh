@@ -88,6 +88,15 @@ if command -v ffmpeg > /dev/null && ldconfig -p | grep 'libmpv\.so' > /dev/null;
     ready 5
     sleep 1
     grim "$out/9-video-to-fog.png"
+    # The 16:9 clip shown whole on the 16:10 screen, with its edges blurred: the strip above it
+    # carries its colours rather than black.
+    before=$(shown)
+    send '{"show":{"source":"'"$clip"'","fit":"blur","transition_ms":0}}'
+    ready $((before + 1))
+    sleep 0.8
+    grim "$out/v-blur.png"
+    edge=$(grim -t ppm -g "720,4 1x1" - | tail -c 3 | od -An -tu1 | tr -s ' ')
+    echo "a blurred edge is filled: $([ "$edge" != " 0 0 0" ] && echo yes || echo no) ($edge)"
 else
     echo "no ffmpeg or libmpv, skipping videos" >&2
 fi

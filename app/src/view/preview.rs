@@ -14,7 +14,8 @@ pub fn panel<'a>(app: &'a App, state: &'a Preview) -> Element<'a, Message> {
             .height(Fill)
             .content_fit(match state.fit {
                 Fit::Cover => ContentFit::Cover,
-                Fit::Contain => ContentFit::Contain,
+                // The preview shows the picture whole; the daemon fills the edges.
+                Fit::Contain | Fit::Blur => ContentFit::Contain,
             })
             .into(),
         None => container(
@@ -78,7 +79,11 @@ pub fn panel<'a>(app: &'a App, state: &'a Preview) -> Element<'a, Message> {
                 .size(12)
                 .color(style::SOFT),
             super::segmented(
-                [(Fit::Cover, "Fill"), (Fit::Contain, "Fit")],
+                [
+                    (Fit::Cover, "Fill"),
+                    (Fit::Contain, "Fit"),
+                    (Fit::Blur, "Blur")
+                ],
                 state.fit,
                 |fit| Message::Preview(Action::Fit(fit))
             ),

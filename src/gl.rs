@@ -15,7 +15,7 @@ use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowS
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::picture::{self, Pixels, Uv};
-use crate::protocol::Look;
+use crate::protocol::{Fit, Look};
 
 pub use glow::Texture;
 
@@ -44,24 +44,44 @@ uniform sampler2D before;
 uniform sampler2D after;
 uniform vec4 before_uv;
 uniform vec4 after_uv;
+uniform vec4 before_back;
+uniform vec4 after_back;
 uniform vec4 before_tone;
 uniform vec4 after_tone;
 uniform float progress;
 in vec2 uv;
 out vec4 color;
-// tone: brightness, contrast around mid-grey, saturation.
-vec3 pick(sampler2D picture, vec4 placement, vec4 tone) {
-    vec2 p = uv * placement.xy + placement.zw;
-    if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) {
-        return vec3(0.0);
+// Edges a picture shown whole leaves: a blurred, dimmed copy of it covering the screen,
+// sixteen taps on a spiral.
+vec3 blurred(sampler2D picture, vec4 back) {
+    vec2 p = uv * back.xy + back.zw;
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 16; i++) {
+        float turn = float(i) * 2.39996;
+        float reach = sqrt(float(i) + 0.5) * 0.015;
+        sum += texture(picture, clamp(p + vec2(cos(turn), sin(turn)) * reach, 0.0, 1.0)).rgb;
     }
-    vec3 c = (texture(picture, p).rgb - 0.5) * tone.y + 0.5 + tone.x;
+    return sum / 16.0 * 0.6;
+}
+// tone: brightness, contrast around mid-grey, saturation, and whether edges are blurred.
+vec3 pick(sampler2D picture, vec4 placement, vec4 back, vec4 tone) {
+    vec2 p = uv * placement.xy + placement.zw;
+    vec3 c;
+    if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) {
+        if (tone.w < 0.5) {
+            return vec3(0.0);
+        }
+        c = blurred(picture, back);
+    } else {
+        c = texture(picture, p).rgb;
+    }
+    c = (c - 0.5) * tone.y + 0.5 + tone.x;
     float grey = dot(c, vec3(0.2126, 0.7152, 0.0722));
     return clamp(mix(vec3(grey), c, tone.z), 0.0, 1.0);
 }
 void main() {
-    vec3 a = pick(before, before_uv, before_tone);
-    vec3 b = pick(after, after_uv, after_tone);
+    vec3 a = pick(before, before_uv, before_back, before_tone);
+    vec3 b = pick(after, after_uv, after_back, after_tone);
     color = vec4(mix(a, b, progress), 1.0);
 }";
 
@@ -79,6 +99,8 @@ struct Program {
     vao: glow::VertexArray,
     before_uv: glow::UniformLocation,
     after_uv: glow::UniformLocation,
+    before_back: glow::UniformLocation,
+    after_back: glow::UniformLocation,
     before_tone: glow::UniformLocation,
     after_tone: glow::UniformLocation,
     progress: glow::UniformLocation,
@@ -99,17 +121,42 @@ impl Target {
 pub struct Layer {
     pub texture: Texture,
     pub uv: Uv,
+    /// Where the blurred copy behind comes from, when the edges are blurred.
+    pub back: Uv,
     pub tone: [f32; 4],
 }
 
 impl Layer {
     pub fn new(texture: Texture, uv: Uv, look: Option<Look>) -> Self {
         let look = look.unwrap_or_default();
+        let uv = if look.flip { picture::flipped(uv) } else { uv };
         Layer {
             texture,
-            uv: if look.flip { picture::flipped(uv) } else { uv },
+            uv,
+            back: uv,
             tone: picture::tone(&look),
         }
+    }
+
+    /// A `source`-sized picture fitted to a `target`-sized screen.
+    pub fn fitted(
+        texture: Texture,
+        fit: Fit,
+        source: (u32, u32),
+        target: (u32, u32),
+        look: Option<Look>,
+    ) -> Self {
+        let mut layer = Layer::new(texture, picture::placement(fit, source, target), look);
+        if fit == Fit::Blur {
+            let back = picture::placement(Fit::Cover, source, target);
+            layer.back = if look.unwrap_or_default().flip {
+                picture::flipped(back)
+            } else {
+                back
+            };
+            layer.tone[3] = 1.0;
+        }
+        layer
     }
 }
 
@@ -294,6 +341,8 @@ impl Gl {
             }
             gl.uniform_4_f32_slice(Some(&program.before_uv), &before.uv);
             gl.uniform_4_f32_slice(Some(&program.after_uv), &after.uv);
+            gl.uniform_4_f32_slice(Some(&program.before_back), &before.back);
+            gl.uniform_4_f32_slice(Some(&program.after_back), &after.back);
             gl.uniform_4_f32_slice(Some(&program.before_tone), &before.tone);
             gl.uniform_4_f32_slice(Some(&program.after_tone), &after.tone);
             gl.uniform_1_f32(Some(&program.progress), progress);
@@ -399,6 +448,8 @@ unsafe fn program(gl: &glow::Context) -> Result<Program, String> {
             vao: gl.create_vertex_array()?,
             before_uv: uniform("before_uv")?,
             after_uv: uniform("after_uv")?,
+            before_back: uniform("before_back")?,
+            after_back: uniform("after_back")?,
             before_tone: uniform("before_tone")?,
             after_tone: uniform("after_tone")?,
             progress: uniform("progress")?,

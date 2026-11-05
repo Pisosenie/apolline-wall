@@ -214,7 +214,8 @@ fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<Pr
     let program = std::env::var_os(OVERRIDE).unwrap_or_else(|| RENDERER.into());
     let scaling = match show.fit {
         Fit::Cover => "fill",
-        Fit::Contain => "fit",
+        // The external renderer has no blur: whole, with plain edges.
+        Fit::Contain | Fit::Blur => "fit",
     };
     let mut command = Command::new(&program);
     command

@@ -27,7 +27,8 @@ impl Gl {
         self.current()?;
         let fit = match fit {
             Fit::Cover => render::Fit::Cover,
-            Fit::Contain => render::Fit::Contain,
+            // Scenes have no blur yet: whole, with plain edges.
+            Fit::Contain | Fit::Blur => render::Fit::Contain,
         };
         unsafe {
             crate::gl::clear_errors(&self.gl);
@@ -61,7 +62,8 @@ impl Gl {
         };
         let fit = match fit {
             Fit::Cover => render::Fit::Cover,
-            Fit::Contain => render::Fit::Contain,
+            // Scenes have no blur yet: whole, with plain edges.
+            Fit::Contain | Fit::Blur => render::Fit::Contain,
         };
         let error = unsafe {
             crate::gl::clear_errors(&self.gl);

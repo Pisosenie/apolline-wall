@@ -347,8 +347,9 @@ fn inspector(app: &App) -> Element<'_, Message> {
             "Fit",
             segmented(
                 [
-                    (Fit::Cover, "Fill the screen"),
-                    (Fit::Contain, "Show it whole"),
+                    (Fit::Cover, "Fill"),
+                    (Fit::Contain, "Whole"),
+                    (Fit::Blur, "Whole, blurred edges"),
                 ],
                 app.fit,
                 Message::Fit,

@@ -37,7 +37,7 @@ apolline-wall status
 - **Steam Workshop.** Wallpaper Engine's Workshop, browsed without an account: videos, scenes, everything or collections, trending, newest or most subscribed, and search. A collection opens to what it holds, and **More from the author** lists the rest of an author's work. Items rated Questionable show only if you turn them on in Settings; Mature ones never do. Collections have no rating of their own, so one shows only if the first wallpapers in it pass. `apolline-wallpapers --page workshop` opens straight on this tab. Two ways to get an item:
   - With the Steam client, **Subscribe in Steam** opens the item there; once Steam has downloaded it, it appears in your library by itself and can be set from the same place.
   - Without it, **Download** goes through `steamcmd` (the `steamcmd` package in the AUR) with a Steam account that owns Wallpaper Engine. Sign in once under **Steam account** in Settings: steamcmd asks for the password and the Steam Guard code, the app shows its question and hands your answer straight to it, and steamcmd keeps the sign-in. The app saves only the account name. Downloads land in `~/.local/share/apolline-wall/steamcmd`, one at a time, and each time the Workshop tab opens the app asks the Workshop which of them have a newer version, for an **Update** button.
-- **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen or shows whole.
+- **Inspector.** Pick a wallpaper, then every monitor or one, and whether it fills the screen, shows whole, or shows whole with its edges filled by a blurred copy of itself.
 - **Look.** Brightness, contrast, saturation and a mirror for pictures, videos, shaders and active native still scenes, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
 - **Tray.** `apolline-wallpapers --tray` puts it in the tray without the window: pause, resume and a random wallpaper for each monitor, and the window a click away. Settings can start it at login through XDG autostart; on niri or Hyprland add the command to your startup.
 - **Now playing.** What each monitor shows, with pause.
@@ -50,7 +50,7 @@ Every instance listens on `$XDG_RUNTIME_DIR/apolline-wall/control.sock`, one JSO
 
 | Command | Does |
 |---|---|
-| `{"show":{"source":"/abs/path.jpg"}}` | every monitor; a folder is a Wallpaper Engine project; also `"output":"DP-1"` for one, `"fit":"cover"\|"contain"`, `"transition_ms":400` |
+| `{"show":{"source":"/abs/path.jpg"}}` | every monitor; a folder is a Wallpaper Engine project; also `"output":"DP-1"` for one, `"fit":"cover"\|"contain"\|"blur"`, `"transition_ms":400` |
 | `{"pause":{"paused":true}}` | no animation, videos and shaders stop, changes land at once; `"output"` for one monitor |
 | `{"limits":{"fps":30,"scale":0.5}}` | how hard shaders may work: frames per second (1–240, 30 to start with) and the share of the monitor's resolution they render at (0.1–1); either can be left out |
 | `{"uniforms":{"accent":"#86bdf0"}}` | the shell's accent, which shaders read as `iAccent` |

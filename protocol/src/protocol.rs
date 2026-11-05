@@ -12,6 +12,8 @@ pub enum Fit {
     #[default]
     Cover,
     Contain,
+    /// Shown whole, with the edges it leaves filled by a blurred, dimmed copy of itself.
+    Blur,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

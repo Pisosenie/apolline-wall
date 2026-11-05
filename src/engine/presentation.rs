@@ -4,7 +4,7 @@ use super::{App, Fade, Loading, Picture, Shown, give_back_memory};
 use super::{native::Native, scenery};
 use crate::gl;
 use crate::loading::{Content, Loaded};
-use crate::picture::{self, UPSIDE_DOWN, WHOLE};
+use crate::picture::{UPSIDE_DOWN, WHOLE};
 use crate::protocol::{self, Event};
 
 impl App {
@@ -138,9 +138,11 @@ impl App {
             Picture::Video(source) => {
                 let canvas = self.videos.get(&source)?.canvas.as_ref()?;
                 let target = self.screens[index].target.as_ref()?;
-                Some(gl::Layer::new(
+                Some(gl::Layer::fitted(
                     self.gl.snapshot(canvas).ok()?,
-                    picture::placement(old.show.fit, canvas.size, target.size()),
+                    old.show.fit,
+                    canvas.size,
+                    target.size(),
                     old.show.look,
                 ))
             }
@@ -169,9 +171,11 @@ impl App {
                 let Some(canvas) = self.videos.get(source).and_then(|v| v.canvas.as_ref()) else {
                     return;
                 };
-                gl::Layer::new(
+                gl::Layer::fitted(
                     canvas.texture,
-                    picture::placement(shown.show.fit, canvas.size, target.size()),
+                    shown.show.fit,
+                    canvas.size,
+                    target.size(),
                     shown.show.look,
                 )
             }

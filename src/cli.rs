@@ -9,7 +9,7 @@ use crate::protocol::{self, Command, Event, Fit, Limits, Monitor, Pause, Show};
 pub const USAGE: &str = "\
 usage:
   apolline-wall daemon                      run on its own and restore the last wallpapers
-  apolline-wall set PATH [--output NAME] [--fit cover|contain] [--transition MS]
+  apolline-wall set PATH [--output NAME] [--fit cover|contain|blur] [--transition MS]
   apolline-wall pause [--output NAME]
   apolline-wall resume [--output NAME]
   apolline-wall limits [--fps 1-240] [--scale 0.1-1]
@@ -190,7 +190,8 @@ fn set(options: &Options) -> Result<(), String> {
     let fit = match options.get("fit").as_deref() {
         None | Some("cover") => Fit::Cover,
         Some("contain") => Fit::Contain,
-        Some(other) => return Err(format!("--fit is cover or contain, not {other}")),
+        Some("blur") => Fit::Blur,
+        Some(other) => return Err(format!("--fit is cover, contain or blur, not {other}")),
     };
     let output = options.get("output");
     let mut stream = connect()?;

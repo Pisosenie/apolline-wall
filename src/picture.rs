@@ -54,7 +54,7 @@ pub fn fit(source: &Source, width: u32, height: u32, fit: Fit) -> Result<Pixels,
     let (sw, sh) = source.image.dimensions();
     let (dw, dh) = match fit {
         Fit::Cover => (width, height),
-        Fit::Contain => contained((sw, sh), (width, height)),
+        Fit::Contain | Fit::Blur => contained((sw, sh), (width, height)),
     };
     let src = ImageRef::new(sw, sh, source.image.as_raw(), PixelType::U8x4)
         .map_err(|err| err.to_string())?;
@@ -74,8 +74,46 @@ pub fn fit(source: &Source, width: u32, height: u32, fit: Fit) -> Result<Pixels,
             rgba,
         }
     } else {
-        letterbox(&rgba, (dw, dh), (width, height))
+        let background = match fit {
+            Fit::Blur => blurred(&src, source.alpha, (width, height))?,
+            _ => [0, 0, 0, 255].repeat((width * height) as usize),
+        };
+        letterbox(background, &rgba, (dw, dh), (width, height))
     })
+}
+
+/// The picture covering the whole target, blurred and dimmed so what sits on it stands out:
+/// shrunk to a few dozen pixels across and stretched back, which is all a blur behind needs.
+fn blurred(src: &ImageRef, alpha: bool, (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
+    let small = |n: u32| (n / 32).max(1);
+    let mut tiny = Image::new(small(width), small(height), PixelType::U8x4);
+    let mut resizer = Resizer::new();
+    resizer
+        .resize(
+            src,
+            &mut tiny,
+            &ResizeOptions::new()
+                .resize_alg(ResizeAlg::Convolution(FilterType::Box))
+                .use_alpha(alpha)
+                .fit_into_destination(Some((0.5, 0.5))),
+        )
+        .map_err(|err| err.to_string())?;
+    let mut full = Image::new(width, height, PixelType::U8x4);
+    resizer
+        .resize(
+            &tiny,
+            &mut full,
+            &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear)),
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rgba = full.into_vec();
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        for channel in &mut pixel[..3] {
+            *channel = (u16::from(*channel) * 3 / 5) as u8;
+        }
+        pixel[3] = 255;
+    }
+    Ok(rgba)
 }
 
 pub(crate) fn pixel_bytes(width: u32, height: u32) -> Result<usize, String> {
@@ -92,8 +130,12 @@ fn contained((sw, sh): (u32, u32), (width, height): (u32, u32)) -> (u32, u32) {
     (side(sw, width), side(sh, height))
 }
 
-fn letterbox(rgba: &[u8], (w, h): (u32, u32), (width, height): (u32, u32)) -> Pixels {
-    let mut out = [0, 0, 0, 255].repeat((width * height) as usize);
+fn letterbox(
+    mut out: Vec<u8>,
+    rgba: &[u8],
+    (w, h): (u32, u32),
+    (width, height): (u32, u32),
+) -> Pixels {
     let (left, top) = ((width - w) / 2, (height - h) / 2);
     let row = w as usize * 4;
     for y in 0..h as usize {
@@ -195,7 +237,7 @@ pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
     let ratio = (tw as f32 / th as f32) / (sw as f32 / sh as f32);
     let (x, y) = match fit {
         Fit::Cover => (ratio.min(1.0), ratio.recip().min(1.0)),
-        Fit::Contain => (ratio.max(1.0), ratio.recip().max(1.0)),
+        Fit::Contain | Fit::Blur => (ratio.max(1.0), ratio.recip().max(1.0)),
     };
     [x, y, (1.0 - x) / 2.0, (1.0 - y) / 2.0]
 }
@@ -210,7 +252,7 @@ pub fn canvas_size(
             let (x, y) = (w as f64 / vw as f64, h as f64 / vh as f64);
             match fit {
                 Fit::Cover => x.max(y),
-                Fit::Contain => x.min(y),
+                Fit::Contain | Fit::Blur => x.min(y),
             }
         })
         .fold(0.0, f64::max);
@@ -325,6 +367,21 @@ mod tests {
         assert_eq!(pixel(&p, 0, 45), [0, 0, 0, 255]);
         assert_eq!(pixel(&p, 80, 45), [10, 200, 10, 255]);
         assert_eq!(pixel(&p, 159, 45), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn blurred_edges_carry_the_picture_dimmed_where_contain_leaves_black() {
+        let p = fit(&solid(100, 100, [10, 200, 10, 255]), 160, 90, Fit::Blur).unwrap();
+        let at = |x: u32, y: u32| {
+            let i = ((y * 160 + x) * 4) as usize;
+            [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3]]
+        };
+        assert_eq!(at(80, 45)[..3], [10, 200, 10]);
+        let edge = at(2, 45);
+        assert!(edge[1] > 100 && edge[1] < 200, "{edge:?}");
+        assert_eq!(edge[3], 255);
+        let black = fit(&solid(100, 100, [10, 200, 10, 255]), 160, 90, Fit::Contain).unwrap();
+        assert_eq!(black.rgba[(45 * 160 + 2) * 4..][..3], [0, 0, 0]);
     }
 
     #[test]
