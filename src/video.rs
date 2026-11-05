@@ -98,7 +98,9 @@ pub struct Mpv {
 
 impl Mpv {
     pub fn open() -> Result<Rc<Self>, String> {
-        let library = ["libmpv.so.2", "libmpv.so"]
+        // mpv 0.35 on is libmpv.so.2; Ubuntu 22.04 and Debian 11 still ship libmpv.so.1, whose
+        // render API is the same.
+        let library = ["libmpv.so.2", "libmpv.so.1", "libmpv.so"]
             .iter()
             .find_map(|name| unsafe { Library::new(name) }.ok())
             .ok_or_else(|| format!("videos need libmpv: {}", install::hint(Need::Mpv)))?;

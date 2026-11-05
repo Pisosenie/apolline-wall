@@ -1,0 +1,54 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ubuntu:
+    strategy:
+      matrix:
+        # The oldest Ubuntu supported, so the package runs on any glibc from 2022 on.
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: apolline-wall
+      - name: The scene renderer, at the commit the Arch package names
+        run: |
+          commit=$(sed -n 's/.*apolline-scene\.git#commit=\([0-9a-f]*\).*/\1/p' apolline-wall/packaging/arch/PKGBUILD)
+          git clone --quiet https://github.com/Pisosenie/apolline-scene.git
+          git -C apolline-scene checkout --quiet "$commit"
+      - name: Build dependencies
+        run: sudo apt-get update -q && sudo apt-get install -yq libwayland-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apolline-wall
+      - name: Format, lint and test
+        working-directory: apolline-wall
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+      - name: Debian package
+        working-directory: apolline-wall
+        run: tools/package-deb.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.runner }}
+          path: apolline-wall/target/release/apolline-wall_*.deb
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apolline-wall/target/release/apolline-wall_*.deb

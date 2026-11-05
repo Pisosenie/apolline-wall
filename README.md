@@ -4,7 +4,7 @@ Live wallpapers for Linux: pictures, videos, Shadertoy shaders and Wallpaper Eng
 
 ## Using it
 
-Install `apolline-wall-git` from the AUR (or `packaging/arch` here), stop whatever draws your wallpaper now (hyprpaper, swww, swaybg), and start the daemon with your session:
+Install `apolline-wall-git` from the AUR (or `packaging/arch` here); on Debian 12 or Ubuntu 22.04 and later, the `.deb` from a release (`sudo apt install ./apolline-wall_*.deb`). Stop whatever draws your wallpaper now (hyprpaper, swww, swaybg), and start the daemon with your session:
 
 | Session | Line |
 |---|---|

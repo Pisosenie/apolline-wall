@@ -69,7 +69,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - Supported 2D scenes now render in the daemon through `apolline-scene`, with cover/contain, looks and crossfades. Static materials are flattened once with no animation timer. Active g_Time/g_Frametime fragment materials reuse the shader clock, FPS/quality limits and pause scheduler. `tools/headless.sh` draws a synthetic scene this way on Mesa's GLES; real Workshop scenes remain to be checked. Unsupported scenes still use `linux-wallpaperengine`, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
 
 ### 6. Every distribution
-- The AUR first. Then Fedora COPR, Debian and Ubuntu packages, and a Flatpak if the sandbox allows layer-shell.
+- The AUR first. A `.deb` for Debian 12 and Ubuntu 22.04 on, x86_64 and arm64, is built and tested on Ubuntu by `.github/workflows/packages.yml` and attached to each `v*` release. Then Fedora COPR, and a Flatpak if the sandbox allows layer-shell.
 
 ### Later
 - Shaders and scenes that react to audio: a PipeWire capture into an FFT texture.
