@@ -379,7 +379,7 @@ cargo build --release
 tools/headless.sh shots/   # Linux: under a throwaway headless sway, a screenshot per step
 ```
 
-`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture. With swaybg installed a stand-in plays linux-wallpaperengine's part: a scene shows, its process stops while paused and is gone after the next wallpaper, and one that crashes leaves the desktop as it was.
+`tools/headless.sh` needs sway and grim; it shows the pictures in `tests/pictures`, crossfades, pauses, and checks that a missing file and an unknown command come back as errors. With ffmpeg and mpv installed it also plays a generated clip, checks that it moves and that a paused one doesn't, and fades from it back to a picture. Then it runs `tests/shaders/hills.frag`, checks that it moves, that a paused one doesn't and that a new accent shows anyway, and fades back to a picture. With swaybg installed a stand-in plays linux-wallpaperengine's part: a scene shows, its process stops while paused and is gone after the next wallpaper, and one that crashes leaves the desktop as it was. With apolline-scene cloned next to this repository it also draws its synthetic scene in the daemon itself, and checks that it shows and that nothing went to the external renderer.
 
 ## Next
 

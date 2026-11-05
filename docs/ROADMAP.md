@@ -66,7 +66,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 
 ### 5. Scenes of our own
 - The renderer is its own library, [apolline-scene](https://github.com/Pisosenie/apolline-scene), written clean-room on GLES; its plan is in its `docs/PLAN.md`. The daemon links it and draws scenes in its own context, so scenes get looks, crossfades and one process for everything.
-- Supported 2D scenes now render in the daemon through `apolline-scene`, with cover/contain, looks and crossfades. Static materials are flattened once with no animation timer. Active g_Time/g_Frametime fragment materials reuse the shader clock, FPS/quality limits and pause scheduler; Linux GLES runtime validation remains pending. Unsupported scenes still use `linux-wallpaperengine`, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
+- Supported 2D scenes now render in the daemon through `apolline-scene`, with cover/contain, looks and crossfades. Static materials are flattened once with no animation timer. Active g_Time/g_Frametime fragment materials reuse the shader clock, FPS/quality limits and pause scheduler. `tools/headless.sh` draws a synthetic scene this way on Mesa's GLES; real Workshop scenes remain to be checked. Unsupported scenes still use `linux-wallpaperengine`, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
 
 ### 6. Every distribution
 - The AUR first. Then Fedora COPR, Debian and Ubuntu packages, and a Flatpak if the sandbox allows layer-shell.
