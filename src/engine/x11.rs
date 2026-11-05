@@ -360,7 +360,8 @@ impl App {
                     let opened = self.x11().map(|x11| x11.open(&monitor));
                     match opened {
                         Some(Ok(window)) => {
-                            let index = self.add_screen(monitor.name, Surface::X11(window));
+                            // RandR gives connectors only; the monitor itself would take its EDID.
+                            let index = self.add_screen(monitor.name, Surface::X11(window), None);
                             self.place(index);
                         }
                         Some(Err(message)) => protocol::emit(&Event::Error {

@@ -55,7 +55,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - X11 fullscreen pause is implemented through EWMH events, independently per monitor, with an opt-out. Real WM verification is still needed; arbitrary occlusion and Wayland fullscreen detection are not covered.
 - KDE Plasma: KWin has layer-shell; whether plasmashell's desktop stays above our background surface needs a run on Plasma 6, and a Plasma wallpaper plugin is the fallback.
 - Each tested on its desktop before it's called supported.
-- Settings keyed by the monitor itself (make, model, serial), not by its connector. DP-1 can become DP-2 after a replug.
+- Settings follow the monitor itself on Wayland: the daemon remembers what the compositor calls each connector's monitor (its description, usually with a serial), and when that monitor comes back on another connector that has nothing of its own, its wallpaper, look and playlist move with it. Two monitors that look the same don't move. Still to do: X11, which would need the EDID.
 
 ### 4. Rules
 - Implemented: independent manual, logind/shell lock, sleep, battery and X11 fullscreen pause reasons. Battery reduction caps shader FPS and resolution without raising or overwriting user limits. Audio rules are still pending.

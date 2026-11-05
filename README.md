@@ -26,7 +26,7 @@ apolline-wall pause                                      # and resume
 apolline-wall status
 ```
 
-`set` waits until the wallpaper shows and says why if it can't. The daemon remembers what each monitor shows and the limits in `~/.config/apolline-wall/state.toml`, so a login comes back to the same desktop. A wallpaper that fails is not written there; the last one that showed stays. Under Apolline the shell decides instead.
+`set` waits until the wallpaper shows and says why if it can't. Each monitor's wallpaper follows the monitor: plug it into another port, or into a dock, and it comes back with the same wallpaper, look and playlist (on Wayland; two identical monitors can't be told apart). The daemon remembers what each monitor shows and the limits in `~/.config/apolline-wall/state.toml`, so a login comes back to the same desktop. A wallpaper that fails is not written there; the last one that showed stays. Under Apolline the shell decides instead.
 
 ## The app
 

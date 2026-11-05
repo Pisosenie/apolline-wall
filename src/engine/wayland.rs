@@ -211,6 +211,23 @@ impl App {
     }
 }
 
+/// What the compositor calls the monitor itself: its description without the connector, which
+/// usually holds a serial, or else its make and model.
+fn identity(info: &OutputInfo) -> Option<String> {
+    let described = info.description.as_deref().map(|description| {
+        info.name
+            .as_deref()
+            .and_then(|name| description.strip_suffix(&format!(" ({name})")))
+            .unwrap_or(description)
+            .trim()
+            .to_owned()
+    });
+    let made = format!("{} {}", info.make, info.model).trim().to_owned();
+    described
+        .filter(|described| !described.is_empty())
+        .or_else(|| (!made.is_empty() && info.make != "Unknown").then_some(made))
+}
+
 fn current_mode(info: &OutputInfo) -> Option<(u32, u32)> {
     let mode = info.modes.iter().find(|mode| mode.current)?;
     let (w, h) = (
@@ -276,10 +293,9 @@ impl OutputHandler for App {
     }
 
     fn new_output(&mut self, _: &Connection, qh: &QueueHandle<Self>, output: WlOutput) {
-        let name = self
-            .wayland()
-            .outputs
-            .info(&output)
+        let info = self.wayland().outputs.info(&output);
+        let identity = info.as_ref().and_then(identity);
+        let name = info
             .and_then(|info| info.name)
             .unwrap_or_else(|| format!("output-{}", output.id().protocol_id()));
         let (shell, viewport) = self.open_surface(qh, &output, &name);
@@ -291,6 +307,7 @@ impl OutputHandler for App {
                 viewport,
                 logical: None,
             }),
+            identity,
         );
     }
 

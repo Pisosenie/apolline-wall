@@ -23,7 +23,14 @@ pub struct State {
     pub outputs: BTreeMap<String, Saved>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub playlists: BTreeMap<String, protocol::Playlist>,
+    /// Which monitor each connector last had, by what the compositor calls it (make, model
+    /// and usually a serial), so its settings follow it to another connector.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monitors: BTreeMap<String, String>,
 }
+
+/// Connectors remembered for monitors: a desk's worth and some docks, not a history.
+const MONITORS: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +59,61 @@ impl Saved {
 }
 
 impl State {
+    /// Where a monitor showing up on `connector` was before: the one connector that last had
+    /// it, now unplugged, while `connector` has nothing of its own. Two monitors that look the
+    /// same can't be told apart, so neither moves.
+    pub fn moved(&self, connector: &str, identity: &str, connected: &[&str]) -> Option<String> {
+        if identity.trim().is_empty()
+            || self.outputs.contains_key(connector)
+            || self.playlists.contains_key(connector)
+        {
+            return None;
+        }
+        let mut before = self
+            .monitors
+            .iter()
+            .filter(|(seen, known)| known.as_str() == identity && seen.as_str() != connector);
+        let (old, _) = before.next()?;
+        (before.next().is_none() && !connected.contains(&old.as_str())).then(|| old.clone())
+    }
+
+    /// Moves a connector's wallpaper and playlist to another.
+    pub fn rename(&mut self, old: &str, new: &str) {
+        if let Some(saved) = self.outputs.remove(old) {
+            self.outputs.insert(new.to_owned(), saved);
+        }
+        if let Some(mut playlist) = self.playlists.remove(old) {
+            playlist.output = Some(new.to_owned());
+            self.playlists.insert(new.to_owned(), playlist);
+        }
+        self.monitors.remove(old);
+    }
+
+    /// Notes which monitor a connector has now; says whether that's news.
+    pub fn seen(&mut self, connector: &str, identity: &str) -> bool {
+        if self.monitors.get(connector).map(String::as_str) == Some(identity) {
+            return false;
+        }
+        if !self.monitors.contains_key(connector) && self.monitors.len() >= MONITORS {
+            let unused = self
+                .monitors
+                .keys()
+                .find(|seen| {
+                    !self.outputs.contains_key(*seen) && !self.playlists.contains_key(*seen)
+                })
+                .cloned();
+            match unused {
+                Some(seen) => {
+                    self.monitors.remove(&seen);
+                }
+                None => return false,
+            }
+        }
+        self.monitors
+            .insert(connector.to_owned(), identity.to_owned());
+        true
+    }
+
     /// Remembers what a command changes; a pause or a status request is not worth a login.
     pub fn record(&mut self, command: &Command) -> bool {
         match command {
@@ -286,6 +348,36 @@ pub fn save(path: &Path, state: &State) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::protocol::Pause;
+
+    #[test]
+    fn a_monitor_takes_its_wallpaper_and_playlist_to_another_connector() {
+        let mut state = State::default();
+        state.record(&show(Some("DP-1"), "/w/dunes.jpg"));
+        state.seen("DP-1", "Dell Inc. DELL U2720Q 7XYZ123");
+        state.seen("HDMI-A-1", "LG Electronics 27GL850");
+        // Unplugged from DP-1, back on DP-2.
+        let moved = state.moved("DP-2", "Dell Inc. DELL U2720Q 7XYZ123", &["HDMI-A-1"]);
+        assert_eq!(moved.as_deref(), Some("DP-1"));
+        state.rename("DP-1", "DP-2");
+        state.seen("DP-2", "Dell Inc. DELL U2720Q 7XYZ123");
+        assert_eq!(state.outputs["DP-2"].source, PathBuf::from("/w/dunes.jpg"));
+        assert!(!state.outputs.contains_key("DP-1"));
+        assert!(!state.monitors.contains_key("DP-1"));
+    }
+
+    #[test]
+    fn nothing_moves_when_the_monitor_could_be_another_or_is_still_plugged_in() {
+        let mut state = State::default();
+        state.record(&show(Some("DP-1"), "/w/a.jpg"));
+        state.seen("DP-1", "Same Model");
+        state.seen("DP-3", "Same Model");
+        assert_eq!(state.moved("DP-2", "Same Model", &[]), None);
+        state.monitors.remove("DP-3");
+        assert_eq!(state.moved("DP-2", "Same Model", &["DP-1"]), None);
+        assert_eq!(state.moved("DP-2", "", &[]), None);
+        state.record(&show(Some("DP-2"), "/w/b.jpg"));
+        assert_eq!(state.moved("DP-2", "Same Model", &[]), None);
+    }
 
     fn show(output: Option<&str>, source: &str) -> Command {
         Command::Show(Show {

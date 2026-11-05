@@ -16,6 +16,11 @@ pub(super) struct Rotation {
 }
 
 impl Rotation {
+    /// Its monitor now on another connector.
+    pub(super) fn moved_to(&mut self, connector: &str) {
+        self.list.output = Some(connector.to_owned());
+    }
+
     fn show(&self, output: Option<String>) -> Show {
         let source = self.list.sources[self.index].clone();
         let settings = self.list.settings.get(&source).cloned().unwrap_or_default();

@@ -1,4 +1,5 @@
 mod diagnostics;
+mod monitors;
 mod native;
 mod playback;
 mod policy;
@@ -711,7 +712,12 @@ impl App {
         self.refresh();
     }
 
-    fn add_screen(&mut self, name: String, surface: Surface) -> usize {
+    /// `identity` is what the compositor calls the monitor, when it says, so its settings
+    /// follow it from one connector to another.
+    fn add_screen(&mut self, name: String, surface: Surface, identity: Option<String>) -> usize {
+        if let Some(identity) = identity {
+            self.recognise(&name, &identity);
+        }
         self.next_screen += 1;
         self.screens.push(Screen {
             covered: false,
