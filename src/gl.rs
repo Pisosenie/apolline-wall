@@ -1,3 +1,4 @@
+mod scenery;
 mod shader;
 
 use std::num::NonZeroU32;
@@ -17,6 +18,16 @@ use crate::picture::{self, Pixels, Uv};
 use crate::protocol::Look;
 
 pub use glow::Texture;
+
+/// Drops error flags earlier calls left behind on the shared context, libmpv's and the
+/// scene renderer's included, so a check after a draw only sees what that draw did.
+pub fn clear_errors(gl: &glow::Context) {
+    for _ in 0..16 {
+        if unsafe { gl.get_error() } == glow::NO_ERROR {
+            break;
+        }
+    }
+}
 pub use shader::{Inputs, Shader};
 
 const VERTEX: &str = "#version 300 es
@@ -186,10 +197,17 @@ impl Gl {
 
     pub fn canvas(&self, size: (u32, u32)) -> Result<Canvas, String> {
         self.current()?;
+        picture::pixel_bytes(size.0, size.1)?;
         let gl = &self.gl;
         unsafe {
             let texture = texture(gl, size, None, glow::CLAMP_TO_EDGE)?;
-            let framebuffer = gl.create_framebuffer()?;
+            let framebuffer = match gl.create_framebuffer() {
+                Ok(framebuffer) => framebuffer,
+                Err(err) => {
+                    gl.delete_texture(texture);
+                    return Err(err);
+                }
+            };
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
             gl.framebuffer_texture_2d(
                 glow::FRAMEBUFFER,

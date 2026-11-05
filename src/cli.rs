@@ -13,6 +13,10 @@ usage:
   apolline-wall pause [--output NAME]
   apolline-wall resume [--output NAME]
   apolline-wall limits [--fps 1-240] [--scale 0.1-1]
+  apolline-wall next|previous [--output NAME]
+  apolline-wall stop-playlist [--output NAME]
+  apolline-wall policy [--battery keep|reduce|pause] [--lock true|false] [--sleep true|false] [--fullscreen true|false]
+  apolline-wall session locked|unlocked       report shell lock state
   apolline-wall status
 
 PATH is a picture, a video (mp4, webm, mkv, mov, gif, ...) or a Shadertoy shader (.frag, .glsl).
@@ -45,6 +49,67 @@ pub fn run(args: &[String]) -> Result<(), String> {
             });
             protocol::parse(&protocol::line(&limits))?;
             send(&limits)
+        }
+        "next" | "previous" => {
+            options.only(&["output"])?;
+            options.no_path()?;
+            send(&Command::Step(protocol::Step {
+                output: options.get("output"),
+                previous: verb == "previous",
+            }))
+        }
+        "stop-playlist" => {
+            options.only(&["output"])?;
+            options.no_path()?;
+            send(&Command::Playlist(protocol::Playlist {
+                output: options.get("output"),
+                sources: Vec::new(),
+                settings: Default::default(),
+                interval_secs: 300,
+                fit: Fit::Cover,
+            }))
+        }
+        "policy" => {
+            options.only(&["battery", "lock", "sleep", "fullscreen"])?;
+            options.no_path()?;
+            let Event::Status { power, .. } = status(&mut connect()?)? else {
+                unreachable!()
+            };
+            let mut policy = power.policy;
+            if options.named.is_empty() {
+                println!(
+                    "{}",
+                    toml::to_string(&policy).map_err(|err| err.to_string())?
+                );
+                return Ok(());
+            }
+            if let Some(mode) = options.get("battery") {
+                policy.battery = match mode.as_str() {
+                    "keep" => apolline_wall_protocol::power::BatteryMode::Keep,
+                    "reduce" => apolline_wall_protocol::power::BatteryMode::Reduce,
+                    "pause" => apolline_wall_protocol::power::BatteryMode::Pause,
+                    _ => return Err("--battery is keep, reduce or pause".into()),
+                };
+            }
+            if let Some(value) = options.number("lock")? {
+                policy.pause_on_lock = value;
+            }
+            if let Some(value) = options.number("sleep")? {
+                policy.pause_on_sleep = value;
+            }
+            if let Some(value) = options.number("fullscreen")? {
+                policy.pause_on_fullscreen = value;
+            }
+            send(&Command::Policy(policy))
+        }
+        "session" => {
+            options.only(&[])?;
+            let locked = match options.path.as_deref() {
+                Some("locked") => true,
+                Some("unlocked") => false,
+                _ => return Err("session requires locked or unlocked".into()),
+            };
+            send(&Command::Session(protocol::Session { locked }))
         }
         "status" => {
             options.only(&[])?;
@@ -150,6 +215,7 @@ fn set(options: &Options) -> Result<(), String> {
     write(
         &mut stream,
         &Command::Show(Show {
+            properties: Default::default(),
             output: output.clone(),
             source: source.clone(),
             fit,
@@ -187,7 +253,7 @@ fn set(options: &Options) -> Result<(), String> {
 }
 
 fn connect() -> Result<UnixStream, String> {
-    let stream = UnixStream::connect(protocol::socket_path()).map_err(|_| {
+    let stream = UnixStream::connect(protocol::client_socket_path()).map_err(|_| {
         "apolline-wall isn't running: start it with `apolline-wall daemon`, or log in to Apolline"
             .to_owned()
     })?;
@@ -246,6 +312,7 @@ fn describe(status: &Event) -> String {
         outputs,
         fps,
         scale,
+        ..
     } = status
     else {
         return String::new();
@@ -256,14 +323,27 @@ fn describe(status: &Event) -> String {
         name,
         source,
         paused,
+        pause_reason,
+        playlist_status,
         ..
     } in outputs
     {
         let shown = source.as_deref().map_or("nothing".to_owned(), |path| {
             home(path).display().to_string()
         });
-        let paused = if *paused { "  (paused)" } else { "" };
-        text.push_str(&format!("{name:width$}  {shown}{paused}\n"));
+        let paused = if *paused {
+            pause_reason
+                .as_ref()
+                .map_or("  (paused)".to_owned(), |reason| {
+                    format!("  (paused: {reason})")
+                })
+        } else {
+            String::new()
+        };
+        let playlist = playlist_status
+            .as_ref()
+            .map_or(String::new(), |status| format!("  ({status})"));
+        text.push_str(&format!("{name:width$}  {shown}{paused}{playlist}\n"));
     }
     let scale = scale.map_or("about 1080p".to_owned(), |scale| format!("{scale}"));
     text.push_str(&format!("shaders: {fps} fps, scale {scale}\n"));
@@ -314,17 +394,30 @@ mod tests {
     #[test]
     fn status_reads_like_a_table() {
         let status = Event::Status {
+            power: Default::default(),
             outputs: vec![
                 Monitor {
                     name: "DP-1".into(),
                     source: Some("/w/fog.jpg".into()),
                     paused: false,
+                    native_scene: false,
+                    animated_scene: false,
+                    manual_paused: false,
+                    pause_reason: None,
+                    playlist: false,
+                    playlist_status: None,
                     look: None,
                 },
                 Monitor {
                     name: "HDMI-A-1".into(),
                     source: None,
                     paused: true,
+                    native_scene: false,
+                    animated_scene: false,
+                    manual_paused: false,
+                    pause_reason: None,
+                    playlist: false,
+                    playlist_status: None,
                     look: None,
                 },
             ],

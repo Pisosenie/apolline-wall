@@ -18,7 +18,11 @@ pub enum Fit {
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Show(Show),
+    Playlist(Playlist),
+    Step(Step),
     Pause(Pause),
+    Policy(crate::power::Policy),
+    Session(Session),
     Limits(Limits),
     Uniforms(Uniforms),
     Adjust(Adjust),
@@ -32,12 +36,42 @@ pub struct Show {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
     pub source: PathBuf,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub properties: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub fit: Fit,
     #[serde(default = "default_transition")]
     pub transition_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Playlist {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    pub sources: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub settings: std::collections::BTreeMap<PathBuf, crate::playlist::Settings>,
+    pub interval_secs: u64,
+    #[serde(default)]
+    pub fit: Fit,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Step {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default)]
+    pub previous: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Session {
+    pub locked: bool,
 }
 
 /// How a wallpaper looks on top of what its file holds: tone, mirroring and pace.
@@ -72,7 +106,7 @@ impl Look {
         *self == Look::default()
     }
 
-    fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         let within = |value: f32, low: f32, high: f32, name: &str| {
             if (low..=high).contains(&value) {
                 Ok(())
@@ -177,6 +211,8 @@ pub enum Event {
         message: String,
     },
     Status {
+        #[serde(default)]
+        power: crate::power::Status,
         outputs: Vec<Monitor>,
         fps: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,13 +226,38 @@ pub struct Monitor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<PathBuf>,
     pub paused: bool,
+    #[serde(default)]
+    pub manual_paused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_scene: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub animated_scene: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub playlist: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlist_status: Option<crate::playlist::Status>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
 }
 
+pub const MAX_COMMAND_BYTES: usize = 2 * 1024 * 1024;
+
 pub fn parse(line: &str) -> Result<Command, String> {
+    if line.len() > MAX_COMMAND_BYTES {
+        return Err("command exceeds 2 MiB".into());
+    }
     let command = serde_json::from_str(line).map_err(|err| format!("{err} in {line}"))?;
     match &command {
+        Command::Policy(policy) => policy.check().map(|()| command.clone()),
+        Command::Show(show) if show.properties.len() > 512 => {
+            Err("a wallpaper may have at most 512 property overrides".into())
+        }
+        Command::Show(show) if show.properties.values().any(holds_null) => {
+            Err("a property override can't be null".into())
+        }
+        Command::Playlist(list) => list.check().map(|()| command.clone()),
         Command::Limits(Limits { fps: Some(fps), .. }) if !(1..=240).contains(fps) => {
             Err(format!("fps {fps} is outside 1..240 in {line}"))
         }
@@ -216,31 +277,73 @@ pub fn parse(line: &str) -> Result<Command, String> {
     }
 }
 
-pub fn socket_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("apolline-wall.sock")
+/// Whether a value is or holds a JSON `null`, which the TOML state file can't keep.
+pub fn holds_null(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(items) => items.iter().any(holds_null),
+        serde_json::Value::Object(fields) => fields.values().any(holds_null),
+        _ => false,
+    }
 }
 
-static LISTENERS: Mutex<Vec<UnixStream>> = Mutex::new(Vec::new());
+pub fn socket_path() -> PathBuf {
+    crate::runtime::path().join("control.sock")
+}
 
-/// Everything emitted from now on also goes to this client, until writing to it fails.
-pub fn listen(stream: UnixStream) {
-    if let Ok(mut listeners) = LISTENERS.lock() {
-        listeners.push(stream);
+/// Where daemons from before the socket moved into its own folder listen. One may still be
+/// running right after an upgrade, until the session ends.
+pub fn old_socket_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(|root| PathBuf::from(root).join("apolline-wall.sock"))
+}
+
+/// The socket a client should talk to: the old one only while that daemon is the one there.
+pub fn client_socket_path() -> PathBuf {
+    let current = socket_path();
+    match old_socket_path() {
+        Some(old) if !current.exists() && old.exists() => old,
+        _ => current,
     }
+}
+
+static LISTENERS: Mutex<Vec<(u64, UnixStream)>> = Mutex::new(Vec::new());
+static NEXT_LISTENER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub struct Listener(u64);
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        if let Ok(mut listeners) = LISTENERS.lock() {
+            listeners.retain(|(id, _)| *id != self.0);
+        }
+    }
+}
+
+/// The connection owns its subscription, so closing it releases the writer immediately.
+pub fn listen(stream: UnixStream) -> Option<Listener> {
+    let mut listeners = LISTENERS.lock().ok()?;
+    if listeners.len() >= 64 {
+        return None;
+    }
+    let id = NEXT_LISTENER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    listeners.push((id, stream));
+    Some(Listener(id))
 }
 
 pub fn emit(event: &Event) {
     let Ok(line) = serde_json::to_string(event) else {
         return;
     };
-    let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{line}");
-    let _ = out.flush();
+    crate::output::send(&line);
     if let Ok(mut listeners) = LISTENERS.lock() {
-        listeners.retain_mut(|stream| writeln!(stream, "{line}").is_ok());
+        listeners.retain_mut(|(_, stream)| {
+            if writeln!(stream, "{line}").is_ok() {
+                true
+            } else {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+                false
+            }
+        });
     }
 }
 
@@ -253,10 +356,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn power_policy_checks_its_limits_and_session_state_is_explicit() {
+        assert!(parse(r#"{"policy":{"battery":"reduce","battery_fps":0}}"#).is_err());
+        assert!(parse(r#"{"policy":{"battery_scale":1.5}}"#).is_err());
+        assert!(parse(r#"{"policy":{"battery":"pause"}}"#).is_ok());
+        assert_eq!(
+            parse(r#"{"session":{"locked":true}}"#),
+            Ok(Command::Session(Session { locked: true }))
+        );
+    }
+
+    #[test]
+    fn subscriptions_release_closed_connections_without_waiting_for_an_event() {
+        use std::io::Read;
+        for _ in 0..128 {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let subscription = listen(server).unwrap();
+            drop(subscription);
+            client.set_nonblocking(true).unwrap();
+            assert_eq!(client.read(&mut [0; 1]).unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn oversized_commands_are_refused_before_json_parsing() {
+        assert_eq!(
+            parse(&" ".repeat(MAX_COMMAND_BYTES + 1)).unwrap_err(),
+            "command exceeds 2 MiB"
+        );
+    }
+
+    #[test]
     fn show_fills_in_the_defaults() {
         assert_eq!(
             parse(r#"{"show":{"source":"/w/fog.jpg"}}"#),
             Ok(Command::Show(Show {
+                properties: Default::default(),
                 output: None,
                 source: "/w/fog.jpg".into(),
                 fit: Fit::Cover,
@@ -269,6 +404,7 @@ mod tests {
                 r#"{"show":{"output":"DP-1","source":"/w/a.png","fit":"contain","transition_ms":0}}"#
             ),
             Ok(Command::Show(Show {
+                properties: Default::default(),
                 output: Some("DP-1".into()),
                 source: "/w/a.png".into(),
                 fit: Fit::Contain,
@@ -348,6 +484,7 @@ mod tests {
     fn commands_survive_the_trip_through_json() {
         for command in [
             Command::Show(Show {
+                properties: Default::default(),
                 output: Some("DP-1".into()),
                 source: "/w/fog.jpg".into(),
                 fit: Fit::Contain,
@@ -378,6 +515,26 @@ mod tests {
             assert_eq!(parse(&line(&command)), Ok(command));
         }
         assert_eq!(line(&Command::Status {}), r#"{"status":{}}"#);
+    }
+
+    #[test]
+    fn old_monitor_status_defaults_to_static_and_new_animation_flag_round_trips() {
+        let mut monitor: Monitor =
+            serde_json::from_str(r#"{"name":"DP-1","paused":false}"#).unwrap();
+        assert!(!monitor.animated_scene);
+        assert!(
+            !serde_json::to_value(&monitor)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("animated_scene")
+        );
+        monitor.native_scene = true;
+        monitor.animated_scene = true;
+        assert_eq!(
+            serde_json::from_str::<Monitor>(&serde_json::to_string(&monitor).unwrap()).unwrap(),
+            monitor
+        );
     }
 
     #[test]

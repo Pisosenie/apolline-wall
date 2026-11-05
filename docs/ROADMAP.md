@@ -15,9 +15,9 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 ## Done
 
 - Pictures, videos through libmpv, and Shadertoy shaders with the shell's accent. Each monitor gets its own wallpaper or follows the default, and changes crossfade.
-- A covered or paused wallpaper costs nothing: drawing waits for frame callbacks, so decoding and shading stop when the compositor stops asking.
+- Paused native playback stops animation work. Wayland drawing follows frame callbacks; X11 additionally pauses fully covered monitors using EWMH fullscreen events. Actual compositor behavior still needs verification.
 - Poster frames for the accent and the lock screen. An Arch package, `apolline-wall-git`.
-- On its own: `apolline-wall daemon` for any session's autostart and a systemd user unit; one socket per session that the CLI, the app and Apolline share, and a second instance refuses to start; `set`, `pause`, `resume`, `limits`, `status`. What each monitor shows comes back after a login, and a wallpaper that fails gives way to the last one that showed.
+- On its own: `apolline-wall daemon` for any session's autostart and a systemd user unit; one socket in the user runtime directory that the CLI, the app and Apolline share (simultaneous graphical sessions are not isolated yet), and a second instance refuses to start; `set`, `pause`, `resume`, `limits`, `status`. What each monitor shows comes back after a login, and a wallpaper that fails gives way to the last one that showed.
 - The app, `apolline-wallpapers`, first version:
   - A library of your folders plus Wallpaper Engine's: Workshop subscriptions, its default projects and yours, found in every Steam library (native and Flatpak). Posters, filters by kind, search.
   - An inspector with which monitor and how to fit.
@@ -44,29 +44,29 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - The content stays its authors'. Nothing is redistributed.
 
 ### 2. Properties and the rest of the app
-- A wallpaper's own properties as controls: Wallpaper Engine's `general.properties` and ours from `wallpaper.toml`, with named presets exported and imported.
+- Wallpaper Engine `general.properties` controls are implemented for bool, slider, color, combo and text. Still needed: named property presets with export/import, `wallpaper.toml`, scripts/conditions and animated preview of property edits.
 - `fit: "blur"` fills mismatched edges with a blurred copy.
-- Favorites and collections. Monitors picked on a drawing of their layout. Previous and next in the tray once playlists exist.
+- Favorites and ordered per-monitor/shared playlists are implemented. Still needed: user collections and monitor layout selection. Previous/next/stop and live playlist summaries are now available in the tray and playback cards; graphical verification remains pending.
 - "Not working? Report it" on a wallpaper, with a diagnostics file that has home paths and user names removed.
 
 ### 3. Every desktop
 - GNOME is written: without layer-shell the daemon opens an xdg window per monitor, titled `apolline-wall:<connector>`, but only if its Shell extension is enabled, so it never covers the desktop. It needs a first run on GNOME 45–49.
 - X11 is written. The daemon is now an engine (pictures, videos, shaders, fades, the protocol) and two drivers that own the surfaces and frame pacing: Wayland (layer-shell, or GNOME's windows) and X11 (a desktop window per RandR monitor, EGL through Xlib, a 16 ms timer where Wayland has frame callbacks, libmpv told the X display). Wayland comes first; a Wayland session that can't host a background falls back to Xwayland. It needs a first run on an X11 session, and on desktops that draw their own icons window (xfdesktop, Nemo, Caja) whether ours stays under it.
-- Still to do on X11: pausing under a fullscreen window, since X11 sends no frame callbacks to stop.
+- X11 fullscreen pause is implemented through EWMH events, independently per monitor, with an opt-out. Real WM verification is still needed; arbitrary occlusion and Wayland fullscreen detection are not covered.
 - KDE Plasma: KWin has layer-shell; whether plasmashell's desktop stays above our background surface needs a run on Plasma 6, and a Plasma wallpaper plugin is the fallback.
 - Each tested on its desktop before it's called supported.
 - Settings keyed by the monitor itself (make, model, serial), not by its connector. DP-1 can become DP-2 after a replug.
 
 ### 4. Rules
-- One presentation policy: the strongest of sleep, lock, pause rules and other audio wins. Reduced quality caps fps and scale without touching the user's own pause.
-- Battery (UPower): lower fps and scale, or show the poster; restore on AC. Sleep and lock (logind) pause everything, and every wallpaper is checked again after a wake.
-- Playlists per monitor: a folder, favorites or a collection, on a timer or at login, with day and night variants by sunrise and sunset.
-- A wallpaper that crashes the daemon twice in a row is skipped until it's set again.
-- Under Apolline these come from its modes instead.
+- Implemented: independent manual, logind/shell lock, sleep, battery and X11 fullscreen pause reasons. Battery reduction caps shader FPS and resolution without raising or overwriting user limits. Audio rules are still pending.
+- UPower and logind follow D-Bus signals, with service recovery. Lock requires LockedHint reporting or the shell hook. A sleep delay inhibitor bounds pause acknowledgement. Real battery, sleep and lock transitions still need verification; there is no automatic poster-only mode yet.
+- Ordered playlists run per monitor or on a shared clock, persist across restart and suspend while a participating monitor is paused. Folder feeds, collections, login rules and sunrise/sunset variants remain pending.
+- Reported wallpaper load/playback failures are skipped for the lifetime of the running playlist; exhausted lists stop without retry timers, and manual selection permits retry. Detecting and persisting repeated crashes of the daemon itself remains pending.
+- Apolline can supply lock state through the session command. Its integration is maintained separately and still needs wiring and verification.
 
 ### 5. Scenes of our own
 - The renderer is its own library, [apolline-scene](https://github.com/Pisosenie/apolline-scene), written clean-room on GLES; its plan is in its `docs/PLAN.md`. The daemon links it and draws scenes in its own context, so scenes get looks, crossfades and one process for everything.
-- Until it draws a scene, `linux-wallpaperengine` does, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
+- Supported 2D scenes now render in the daemon through `apolline-scene`, with cover/contain, looks and crossfades. Static materials are flattened once with no animation timer. Active g_Time/g_Frametime fragment materials reuse the shader clock, FPS/quality limits and pause scheduler; Linux GLES runtime validation remains pending. Unsupported scenes still use `linux-wallpaperengine`, and a new `fps` limit reaches that scene only when it starts again; looks and speed don't apply to it.
 
 ### 6. Every distribution
 - The AUR first. Then Fedora COPR, Debian and Ubuntu packages, and a Flatpak if the sandbox allows layer-shell.

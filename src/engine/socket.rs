@@ -10,12 +10,15 @@ use crate::protocol::{self, Command, Event};
 
 /// Listens on the one socket per session; a live socket means another instance owns the wallpaper.
 pub(super) fn serve(handle: &LoopHandle<'static, App>) -> Result<(), String> {
+    apolline_wall_protocol::runtime::ensure()?;
     let path = protocol::socket_path();
-    if UnixStream::connect(&path).is_ok() {
-        return Err(format!(
-            "another apolline-wall is already running on {}",
-            path.display()
-        ));
+    for live in std::iter::once(path.clone()).chain(protocol::old_socket_path()) {
+        if UnixStream::connect(&live).is_ok() {
+            return Err(format!(
+                "another apolline-wall is already running on {}",
+                live.display()
+            ));
+        }
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).map_err(|err| format!("{}: {err}", path.display()))?;
@@ -47,11 +50,14 @@ fn accept(handle: &LoopHandle<'static, App>, stream: UnixStream) {
     if stream.set_nonblocking(true).is_err() {
         return;
     }
-    protocol::listen(listener);
+    let Some(subscription) = protocol::listen(listener) else {
+        return;
+    };
     let mut pending = Vec::new();
     let _ = handle.insert_source(
         Generic::new(stream, Interest::READ, Mode::Level),
         move |_, stream, app: &mut App| {
+            let _subscription = &subscription;
             let mut chunk = [0; 4096];
             let mut closed = false;
             loop {
@@ -60,7 +66,16 @@ fn accept(handle: &LoopHandle<'static, App>, stream: UnixStream) {
                         closed = true;
                         break;
                     }
-                    Ok(read) => pending.extend_from_slice(&chunk[..read]),
+                    Ok(read) => {
+                        if pending.len() + read > protocol::MAX_COMMAND_BYTES {
+                            return Ok(PostAction::Remove);
+                        }
+                        pending.extend_from_slice(&chunk[..read]);
+                        // Yield to other clients and rendering even if this peer keeps writing.
+                        if pending.contains(&b'\n') {
+                            break;
+                        }
+                    }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => break,
                     Err(_) => return Ok(PostAction::Remove),
                 }

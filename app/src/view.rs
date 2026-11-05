@@ -1,4 +1,7 @@
 mod look;
+mod playing;
+pub mod power;
+mod preview;
 mod shop;
 mod steam;
 
@@ -24,12 +27,25 @@ pub fn view(app: &App) -> Element<'_, Message> {
         Page::Workshop => shop::page(app),
         Page::Settings => settings(app),
     };
-    container(column![top(app), page, playing(app)].spacing(16))
-        .padding(20)
-        .style(style::window)
-        .width(Fill)
-        .height(Fill)
-        .into()
+    let base: Element<'_, Message> =
+        container(column![top(app), page, playing::bar(app)].spacing(16))
+            .padding(20)
+            .style(style::window)
+            .width(Fill)
+            .height(Fill)
+            .into();
+    match &app.preview {
+        Some(state) => stack![
+            base,
+            iced::widget::opaque(
+                container(preview::panel(app, state))
+                    .padding(20)
+                    .center(Fill)
+            )
+        ]
+        .into(),
+        None => base,
+    }
 }
 
 fn top(app: &App) -> Element<'_, Message> {
@@ -74,10 +90,11 @@ fn top(app: &App) -> Element<'_, Message> {
 
 fn library(app: &App) -> Element<'_, Message> {
     let items = app.visible();
-    let filters = row![
+    let filters = column![
         segmented(
             [
                 (Filter::All, "All"),
+                (Filter::Favorites, "Favorites"),
                 (Filter::Pictures, "Pictures"),
                 (Filter::Videos, "Videos"),
                 (Filter::Shaders, "Shaders"),
@@ -86,17 +103,20 @@ fn library(app: &App) -> Element<'_, Message> {
             app.filter,
             Message::Filter,
         ),
-        space::horizontal(),
-        text(format!("{} wallpapers", items.len()))
-            .size(13)
-            .color(style::FAINT),
-        button(text("Rescan").size(13))
-            .padding([6, 12])
-            .style(style::secondary)
-            .on_press(Message::Rescan),
+        row![
+            space::horizontal(),
+            text(format!("{} wallpapers", items.len()))
+                .size(13)
+                .color(style::FAINT),
+            button(text("Rescan").size(13))
+                .padding([6, 12])
+                .style(style::secondary)
+                .on_press(Message::Rescan),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
     ]
-    .spacing(12)
-    .align_y(Alignment::Center);
+    .spacing(10);
     let grid: Element<'_, Message> = if items.is_empty() {
         empty(app)
     } else {
@@ -140,10 +160,8 @@ fn empty(app: &App) -> Element<'_, Message> {
         .join(", ");
     container(
         column![
-            text("Nothing here yet").size(18).font(style::medium()),
-            text(format!(
-                "Put pictures, videos or .frag shaders in {folders}, or add a folder in Settings."
-            ))
+            text(if app.filter == Filter::Favorites { "No favorites here yet" } else if !app.search.is_empty() || app.filter != Filter::All { "No matching wallpapers" } else { "Nothing here yet" }).size(18).font(style::medium()),
+            text(if app.filter == Filter::Favorites { "Add wallpapers to Favorites from their inspector, or clear the search.".to_owned() } else if !app.search.is_empty() || app.filter != Filter::All { "Try another search or choose All.".to_owned() } else { format!("Put pictures, videos or .frag shaders in {folders}, or add a folder in Settings.") })
             .size(14)
             .color(style::FAINT),
         ]
@@ -179,7 +197,13 @@ fn tile<'a>(app: &'a App, item: &'a Item) -> Element<'a, Message> {
         )
         .width(Fill)
         .clip(true),
-        text(item.what.label()).size(11).color(style::FAINT),
+        text(if app.config.favorites.contains(&item.path) {
+            format!("★ {}", item.what.label())
+        } else {
+            item.what.label().to_owned()
+        })
+        .size(11)
+        .color(style::FAINT),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -265,7 +289,56 @@ fn inspector(app: &App) -> Element<'_, Message> {
                 .color(style::ACCENT),
         );
     }
+    details = details.push(
+        button(
+            text(if app.config.favorites.contains(&item.path) {
+                "Remove from favorites"
+            } else {
+                "Add to favorites"
+            })
+            .size(13),
+        )
+        .padding([6, 12])
+        .style(style::secondary)
+        .on_press(Message::Favorite(item.path.clone())),
+    );
+    details = details.push(
+        button(text("Preview before applying").size(13))
+            .padding([6, 12])
+            .style(style::secondary)
+            .on_press(Message::Preview(crate::preview::Action::Open)),
+    );
     details = details.push(section("Show on", monitors(app)));
+    details = details.push(
+        column![
+            text("Rotation interval").size(12).color(style::SOFT),
+            slider(
+                1..=60,
+                app.config.rotation_minutes.clamp(1, 60),
+                Message::RotationInterval
+            )
+            .step(1_u32)
+            .style(style::rail)
+        ]
+        .spacing(6),
+    );
+    details = details.push(
+        button(
+            text(format!(
+                "Rotate these wallpapers · {} min",
+                app.config.rotation_minutes.clamp(1, 60)
+            ))
+            .size(13),
+        )
+        .padding([6, 12])
+        .style(style::secondary)
+        .on_press_maybe(app.daemon.as_ref().map(|_| Message::Rotate)),
+    );
+    details = details.push(
+        text("Uses saved wallpaper settings. Apply edits before starting rotation.")
+            .size(11)
+            .color(style::FAINT),
+    );
     if matches!(
         item.what,
         What::Picture | What::Video | What::Scene | What::Web
@@ -282,15 +355,34 @@ fn inspector(app: &App) -> Element<'_, Message> {
             ),
         ));
     }
-    if item.what.takes_a_look() {
+    if item.what.takes_a_look()
+        || (item.what == What::Scene
+            && app.daemon.as_ref().is_some_and(|daemon| {
+                daemon.outputs.iter().any(|m| {
+                    m.native_scene
+                        && m.source.as_ref() == Some(&item.path)
+                        && app.target.as_ref().is_none_or(|target| target == &m.name)
+                })
+            }))
+    {
         details = details.push(section("Look", look::editor(app, item)));
+    }
+    if item.what == What::Scene
+        && (app.property_editor.error.is_some()
+            || app
+                .property_editor
+                .schema
+                .as_ref()
+                .is_some_and(|schema| !schema.properties.is_empty()))
+    {
+        details = details.push(crate::properties::controls(app));
     }
     let mut apply =
         button(container(text("Set as wallpaper").size(14).font(style::medium())).center_x(Fill))
             .padding([11, 16])
             .width(Fill)
             .style(style::primary);
-    if app.daemon.is_some() && item.what.missing().is_none() {
+    if app.daemon.is_some() && item.what.missing().is_none() && app.property_editor.can_apply() {
         apply = apply.on_press(Message::Apply);
     }
     let mut bottom = column![].spacing(10);
@@ -311,70 +403,6 @@ fn inspector(app: &App) -> Element<'_, Message> {
         .height(Fill)
         .style(style::panel)
         .into()
-}
-
-fn playing(app: &App) -> Element<'_, Message> {
-    let Some(daemon) = &app.daemon else {
-        return container(
-            row![
-                container(space())
-                    .width(8)
-                    .height(8)
-                    .style(style::pill(style::DANGER)),
-                text("apolline-wall isn't running, so nothing can be set")
-                    .size(13)
-                    .color(style::SOFT),
-                space::horizontal(),
-                button(text("Start it").size(13))
-                    .padding([6, 14])
-                    .style(style::primary)
-                    .on_press(Message::Start),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        )
-        .padding([10, 14])
-        .style(style::panel)
-        .into();
-    };
-    let everything_paused = !daemon.outputs.is_empty() && daemon.outputs.iter().all(|m| m.paused);
-    let mut bar = Row::new().spacing(10).align_y(Alignment::Center);
-    for monitor in &daemon.outputs {
-        let showing = monitor
-            .source
-            .as_deref()
-            .map_or("nothing".to_owned(), |path| app.title(path));
-        bar = bar.push(
-            container(
-                row![
-                    text(monitor.name.as_str()).size(12).font(style::semibold()),
-                    text(showing).size(12).color(style::SOFT),
-                    button(text(if monitor.paused { "Resume" } else { "Pause" }).size(11))
-                        .padding([3, 9])
-                        .style(style::secondary)
-                        .on_press(Message::Pause(Some(monitor.name.clone()), !monitor.paused)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding([5, 6])
-            .style(style::pill(style::FILL)),
-        );
-    }
-    bar = bar.push(space::horizontal()).push(
-        button(
-            text(if everything_paused {
-                "Resume all"
-            } else {
-                "Pause all"
-            })
-            .size(13),
-        )
-        .padding([6, 14])
-        .style(style::secondary)
-        .on_press(Message::Pause(None, !everything_paused)),
-    );
-    container(bar).padding([8, 10]).style(style::panel).into()
 }
 
 fn settings(app: &App) -> Element<'_, Message> {
@@ -454,6 +482,7 @@ fn settings(app: &App) -> Element<'_, Message> {
     let page = column![
         section("Library folders", column![folders, add].spacing(10).into()),
         section("Shaders", shaders.into()),
+        section("Automatic playback", power::controls(app)),
         section(
             "Steam Workshop",
             row![

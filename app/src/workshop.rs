@@ -310,10 +310,17 @@ fn prune(folder: &Path, limit: u64) {
 /// The item's Workshop preview, shrunk and cached by id and update time.
 pub async fn preview(entry: Entry) -> (String, Option<Handle>) {
     let id = entry.id.clone();
+    let cache = config::cache_dir()
+        .join("workshop")
+        .join(format!("{}-{}.png", entry.id, entry.updated));
+    if cache.is_file() {
+        return (id, Some(Handle::from_path(cache)));
+    }
+    let Ok(permit) = crate::library::THUMBNAIL_JOBS.acquire().await else {
+        return (id, None);
+    };
     let handle = tokio::task::spawn_blocking(move || {
-        let cache = config::cache_dir()
-            .join("workshop")
-            .join(format!("{}-{}.png", entry.id, entry.updated));
+        let _permit = permit;
         if !cache.exists() {
             let bytes = api::agent()
                 .get(entry.preview.as_deref()?)

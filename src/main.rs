@@ -1,12 +1,22 @@
 use apolline_wall_protocol::protocol;
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod animation;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod announcement;
 mod cli;
 #[cfg(target_os = "linux")]
 mod engine;
 #[cfg(target_os = "linux")]
 mod gl;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod loading;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod native;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod picture;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod power;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod state;
 #[cfg(target_os = "linux")]

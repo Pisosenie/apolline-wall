@@ -12,7 +12,7 @@ The idea comes from [WallpaperMachine](https://github.com/MMFoundation/Wallpaper
   - `engine.rs`: the engine. Commands, screens, decoding, crossfades, looks, pause. Screens are known by an id, never by a Wayland output. It doesn't know which display it's on except through two enums, `Desktop` and `Surface`.
   - `engine/wayland.rs` and `engine/wayland/shell.rs`: the Wayland driver. wlr-layer-shell background surfaces; on GNOME, which has none, one xdg window per monitor (`app_id` `apolline-wall`, title `apolline-wall:<connector>`) that the Shell extension in `gnome/` puts behind everything, opened only when that extension is enabled. Frame callbacks pace drawing, and a frame request has to go out before the commit it belongs to.
   - `engine/x11.rs`: the X11 driver. A `_NET_WM_WINDOW_TYPE_DESKTOP` window per RandR monitor, Xlib opened with `x11-dl` for EGL and its XCB connection used through x11rb, a 16 ms timer instead of frame callbacks. If Wayland can't host a background (GNOME without the extension) and `DISPLAY` is set, the daemon uses this through Xwayland.
-  - `engine/playback.rs` (videos through libmpv, one decode per file for every monitor), `engine/shading.rs` (Shadertoy shaders, fps limit, `iAccent`), `engine/scenery.rs` (Wallpaper Engine scenes handed to `linux-wallpaperengine` as a process per monitor: SIGSTOP while paused, fallback if it dies), `engine/socket.rs` (`$XDG_RUNTIME_DIR/apolline-wall.sock`, one per session).
+  - `engine/playback.rs` (videos through libmpv, one decode per file for every monitor), `engine/shading.rs` (Shadertoy shaders, fps limit, `iAccent`), `engine/scenery.rs` (Wallpaper Engine scenes handed to `linux-wallpaperengine` as a process per monitor: SIGSTOP while paused, fallback if it dies), `engine/socket.rs` (`$XDG_RUNTIME_DIR/apolline-wall/control.sock`; clients and the single-instance check still look at the old `apolline-wall.sock`).
   - `gl.rs` and `gl/shader.rs`: GLES 3 through glutin's EGL and glow. `video.rs`: our own FFI to libmpv, loaded with libloading only when the first video shows. `picture.rs`: decoding and fitting stills.
 - `app/` (`apolline-wallpapers`, iced 0.14): `main.rs` (state and messages), `view.rs` and `view/{shop,look,steam}.rs`, `library.rs` (folders plus Wallpaper Engine's), `engine.rs` (Steam libraries and `project.json`), `workshop.rs` and `workshop/api.rs` (Workshop browsing without a key: browse pages, collections, authors, `GetPublishedFileDetails`, `GetCollectionDetails`), `browse.rs`, `steamcmd.rs` and `download.rs` (downloads without the Steam client, see below), `tray.rs` (StatusNotifierItem through ksni, Linux only), `config.rs` (`~/.config/apolline-wall/app.toml`), `daemon.rs` (talking to the daemon), `style.rs`.
 - `gnome/apolline-wall@pisosenie.github.io/`: the GNOME Shell extension, GNOME 45–49, ES modules.
@@ -83,17 +83,6 @@ These are the rules the project was built under; they win over any generic ones.
 
 ## Where things stand
 
-Done and pushed (last commit `3413e44`): pictures, videos, Shadertoy shaders, the daemon and CLI with state and fallback, the Arch package, the app (library, inspector, look editor with live drafts, settings, tray), the Workshop tab (videos, scenes, everything, collections, authors, ratings: Questionable is opt-in, Mature never shows; collections are judged by their first four wallpapers), downloads through the Steam client or steamcmd with update checks, scenes through linux-wallpaperengine, the engine and driver split, X11, GNOME through its extension or Xwayland, install hints per distribution.
+`docs/ROADMAP.md` is the current state: what is done, what still needs a real run, and what is left. Keep it true when the code changes, as short lists rather than a log.
 
-Never run for real yet, only built and tested against stand-ins:
-- GNOME (the extension and the Xwayland fallback; Mutter may keep the window below the top bar), KDE Plasma (whether plasmashell's desktop stays above our surface), X11 sessions (and desktops with their own icons window: xfdesktop, Nemo, Caja).
-- Real steamcmd with an account that owns Wallpaper Engine, and real linux-wallpaperengine with Wallpaper Engine's assets. Both need an x86_64 machine with Steam.
-- Video and shader speed by eye, hardware decoding and battery use on real hardware.
-
-Left to do, in `docs/ROADMAP.md` order:
-1. Wallpaper Engine's own assets through steamcmd (`app_update 431960` for the Windows platform), so scenes work without the Steam client.
-2. A wallpaper's own properties as controls (Wallpaper Engine's `general.properties`, ours from `wallpaper.toml`), with presets; `fit: "blur"`; favorites; "report a problem".
-3. On X11, pausing under a fullscreen window; settings keyed by the monitor itself, not its connector.
-4. Rules: battery, sleep, lock, playlists, skipping a wallpaper that keeps crashing.
-5. Scenes drawn by apolline-scene inside the daemon instead of a separate process.
-6. Packages for other distributions: Debian/Ubuntu, Fedora, a Flatpak for the app.
+Never run for real yet, only built and tested against stand-ins: GNOME, KDE Plasma and X11 sessions; real steamcmd and real linux-wallpaperengine (both need an x86_64 machine with Steam); D-Bus power rules against real UPower and logind; native scenes on GLES; speed, hardware decoding and battery use on real hardware.

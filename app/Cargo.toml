@@ -11,6 +11,7 @@ name = "apolline-wallpapers"
 path = "src/main.rs"
 
 [dependencies]
+apolline-scene = { path = "../../apolline-scene" }
 apolline-wall-protocol = { path = "../protocol" }
 iced = { version = "0.14", features = ["image", "tokio"] }
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "rt-multi-thread", "process", "sync"] }

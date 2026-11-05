@@ -1,9 +1,11 @@
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+mod source;
+
+use std::path::Path;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 
-use super::{App, Picture, Scene, poster_path};
+use super::{App, Picture, Scene, SceneShader};
 use crate::gl::{self, Gl};
 use crate::picture;
 use crate::protocol::{self, Event, Limits, Uniforms};
@@ -20,13 +22,15 @@ impl App {
         let source = loading.show.source.clone();
         match self.scene(&source, loading.size) {
             Ok(scene) => {
-                let poster = self.poster(&scene, &source);
-                self.present(index, Picture::Shader(Box::new(scene)), loading);
-                protocol::emit(&Event::Ready {
-                    output,
-                    source,
-                    poster,
+                // Full size: the shell shows a shader's poster on the lock screen.
+                let pixels = self.gl.read(&scene.canvas).map(|rgba| picture::Pixels {
+                    width: scene.canvas.size.0,
+                    height: scene.canvas.size.1,
+                    rgba,
                 });
+                let generation = loading.generation;
+                self.present(index, Picture::Shader(Box::new(scene)), loading);
+                self.queue_poster(output, source, generation, pixels);
             }
             Err(message) => {
                 self.give_up(index, loading.show);
@@ -40,13 +44,12 @@ impl App {
     }
 
     fn scene(&self, source: &Path, size: (u32, u32)) -> Result<Scene, String> {
-        let text = std::fs::read_to_string(source)
-            .map_err(|err| format!("{}: {err}", source.display()))?;
+        let text = self::source::read(source)?;
         let shader = self
             .gl
             .shader(&text)
             .map_err(|log| format!("{}: {log}", source.display()))?;
-        let canvas = match self.gl.canvas(picture::shader_size(size, self.scale)) {
+        let canvas = match self.gl.canvas(self.shader_size(size)) {
             Ok(canvas) => canvas,
             Err(message) => {
                 self.gl.forget(shader);
@@ -54,84 +57,75 @@ impl App {
             }
         };
         let mut scene = Scene {
-            shader,
+            shader: SceneShader::Toy(shader),
             canvas,
-            time: 0.0,
-            last: None,
-            frame: 0,
-            timer: false,
+            clock: crate::animation::Clock::default(),
+            timer: None,
         };
-        if let Err(message) = advance(&self.gl, self.fps, self.accent, 1.0, &mut scene) {
+        if let Err(message) = advance(
+            &self.gl,
+            self.effective_fps(),
+            self.accent,
+            1.0,
+            true,
+            &mut scene,
+        ) {
             self.drop_scene(scene);
             return Err(message);
         }
         Ok(scene)
     }
 
-    fn poster(&self, scene: &Scene, source: &Path) -> PathBuf {
-        let path = poster_path(source);
-        let written = self
-            .gl
-            .read(&scene.canvas)
-            .and_then(|rgba| picture::save_png(&path, &rgba, scene.canvas.size));
-        match written {
-            Ok(()) => path,
-            Err(message) => {
-                protocol::emit(&Event::Error {
-                    output: None,
-                    source: Some(source.to_path_buf()),
-                    message: format!("poster frame: {message}"),
-                });
-                source.to_path_buf()
-            }
-        }
-    }
-
     pub(super) fn drop_scene(&self, scene: Scene) {
-        self.gl.forget(scene.shader);
+        if let Some(token) = scene.timer {
+            self.handle.remove(token);
+        }
+        match scene.shader {
+            SceneShader::Toy(shader) => self.gl.forget(shader),
+            SceneShader::Native(renderer, _) => self.gl.drop_native(renderer),
+        }
         self.gl.free(scene.canvas);
     }
 
     /// Called when the compositor wants a frame: draws now if the frame is due, or sets a timer.
     pub(super) fn tick_scene(&mut self, index: usize) {
-        let interval = Duration::from_secs_f64(1.0 / f64::from(self.fps));
-        let Some(Picture::Shader(scene)) = self.screens[index]
-            .shown
-            .as_mut()
-            .map(|shown| &mut shown.picture)
-        else {
+        let fps = self.effective_fps();
+        let id = self.screens[index].id;
+        let Some(shown) = self.screens[index].shown.as_mut() else {
             return;
         };
-        let wait = scene.last.map_or(Duration::ZERO, |last| {
-            interval.saturating_sub(last.elapsed())
-        });
+        let generation = shown.generation;
+        let Picture::Shader(scene) = &mut shown.picture else {
+            return;
+        };
+        let wait = scene.clock.wait(Instant::now(), fps);
         if wait.is_zero() {
             self.step(index);
-        } else if !scene.timer {
-            scene.timer = true;
-            let id = self.screens[index].id;
+        } else if scene.timer.is_none() {
             let timer = Timer::from_duration(wait);
-            let _ = self
+            scene.timer = self
                 .handle
                 .insert_source(timer, move |_, _, app: &mut App| {
-                    app.scene_due(id);
+                    app.scene_due(id, generation);
                     TimeoutAction::Drop
-                });
+                })
+                .ok();
         }
     }
 
-    fn scene_due(&mut self, id: u64) {
+    fn scene_due(&mut self, id: u64, generation: u64) {
         let Some(index) = self.index_of(id) else {
             return;
         };
         let Some(Picture::Shader(scene)) = self.screens[index]
             .shown
             .as_mut()
+            .filter(|shown| shown.generation == generation)
             .map(|shown| &mut shown.picture)
         else {
             return;
         };
-        scene.timer = false;
+        scene.timer = None;
         let screen = &self.screens[index];
         if !screen.frame_pending && !self.is_paused(&screen.name) {
             self.step(index);
@@ -140,7 +134,7 @@ impl App {
 
     fn step(&mut self, index: usize) {
         let paused = self.is_paused(&self.screens[index].name);
-        let (fps, accent) = (self.fps, self.accent);
+        let (fps, accent) = (self.effective_fps(), self.accent);
         let screen = &mut self.screens[index];
         let Some(shown) = screen.shown.as_mut() else {
             return;
@@ -149,16 +143,29 @@ impl App {
         let Picture::Shader(scene) = &mut shown.picture else {
             return;
         };
-        let result = advance(&self.gl, fps, accent, speed, scene);
-        if paused {
-            scene.last = None;
+        if let Some(token) = scene.timer.take() {
+            self.handle.remove(token);
         }
+        let result = advance(&self.gl, fps, accent, speed, !paused, scene);
         if let Err(message) = result {
+            let show = shown.show.clone();
+            let output = screen.name.clone();
+            if let Some(shown) = self.screens[index].shown.take()
+                && let Picture::Shader(scene) = shown.picture
+            {
+                self.drop_scene(*scene);
+            }
+            if let Some(fade) = self.screens[index].fade.take() {
+                self.gl.delete(fade.before.texture);
+            }
+            self.give_up(index, show.clone());
             protocol::emit(&Event::Error {
-                output: Some(screen.name.clone()),
-                source: None,
+                output: Some(output),
+                source: Some(show.source),
                 message,
             });
+            protocol::emit(&self.status());
+            return;
         }
         self.draw(index);
     }
@@ -177,7 +184,10 @@ impl App {
                 continue;
             };
             if paused {
-                scene.last = None;
+                scene.clock.pause();
+                if let Some(token) = scene.timer.take() {
+                    self.handle.remove(token);
+                }
             } else if !waiting {
                 self.step(index);
             }
@@ -185,6 +195,7 @@ impl App {
     }
 
     pub(super) fn limit(&mut self, limits: Limits) {
+        let changed_fps = limits.fps.is_some_and(|fps| fps != self.fps);
         if let Some(fps) = limits.fps {
             self.fps = fps;
         }
@@ -194,13 +205,16 @@ impl App {
                 self.rescale_scene(index);
             }
         }
+        if changed_fps {
+            self.pause_scenes();
+        }
     }
 
-    fn rescale_scene(&mut self, index: usize) {
+    pub(super) fn rescale_scene(&mut self, index: usize) {
         let Some(size) = self.screens[index].target.as_ref().map(|t| t.size()) else {
             return;
         };
-        let wanted = picture::shader_size(size, self.scale);
+        let wanted = self.shader_size(size);
         let screen = &mut self.screens[index];
         let Some(Picture::Shader(scene)) = screen.shown.as_mut().map(|shown| &mut shown.picture)
         else {
@@ -238,7 +252,7 @@ impl App {
                     .shown
                     .as_ref()
                     .map(|shown| &shown.picture),
-                Some(Picture::Shader(_))
+                Some(Picture::Shader(scene)) if matches!(scene.shader, SceneShader::Toy(_))
             );
             if shader {
                 self.step(index);
@@ -247,29 +261,32 @@ impl App {
     }
 }
 
-fn advance(
+pub(super) fn advance(
     gl: &Gl,
     fps: u32,
     accent: [f32; 3],
     speed: f32,
+    running: bool,
     scene: &mut Scene,
 ) -> Result<(), String> {
-    let now = Instant::now();
-    let delta = scene
-        .last
-        .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
-    scene.time += delta * speed;
-    scene.last = Some(now);
-    let inputs = gl::Inputs {
-        time: scene.time,
-        delta: delta.min(0.25),
-        fps: fps as f32,
-        frame: scene.frame,
-        date: date(),
-        accent,
-    };
-    gl.run(&scene.shader, &scene.canvas, &inputs)?;
-    scene.frame += 1;
+    let frame = scene.clock.tick(Instant::now(), speed, running, fps);
+    match &scene.shader {
+        SceneShader::Toy(shader) => {
+            let inputs = gl::Inputs {
+                time: frame.time,
+                delta: frame.delta,
+                fps: fps as f32,
+                frame: frame.number,
+                date: date(),
+                accent,
+            };
+            gl.run(shader, &scene.canvas, &inputs)?;
+        }
+        SceneShader::Native(renderer, fit) => {
+            gl.run_native(renderer, &scene.canvas, *fit, frame.time, frame.delta)?
+        }
+    }
+    scene.clock.rendered();
     Ok(())
 }
 

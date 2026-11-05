@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,6 +8,7 @@ use apolline_wall_protocol::install::{self, Need};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 
+use super::process::Process;
 use super::{App, Picture, Surface};
 use crate::protocol::{self, Event, Fit, Show};
 
@@ -20,19 +19,34 @@ const OVERRIDE: &str = "APOLLINE_WALL_SCENE_RENDERER";
 
 /// A wallpaper another program draws on its own layer surface while ours steps aside.
 pub(super) struct External {
-    pub pid: i32,
+    process: Process,
     pub stopped: bool,
     /// What showed before, put back if the renderer gives up.
     pub fallback: Option<Show>,
 }
 
 pub(super) struct Ended {
-    pub pid: i32,
+    pub id: u64,
     pub why: String,
 }
 
 impl App {
-    pub(super) fn start_external(&mut self, index: usize) {
+    pub(super) fn external_pids(&self) -> Vec<u32> {
+        self.screens
+            .iter()
+            .filter_map(
+                |screen| match screen.shown.as_ref().map(|shown| &shown.picture) {
+                    Some(Picture::External(external)) => Some(external.process.pid),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
+    /// Hands a scene the native renderer can't draw to linux-wallpaperengine. It draws with
+    /// the scene's own property values: a saved edit it can't take doesn't keep it from showing.
+    /// `reason` says why the native renderer passed, for when this fails too.
+    pub(super) fn start_external(&mut self, index: usize, reason: String) {
         let Some(loading) = self.screens[index].loading.take() else {
             return;
         };
@@ -41,13 +55,19 @@ impl App {
             output: Some(output.clone()),
             ..shown.show.clone()
         });
-        match spawn(&output, &loading.show, self.fps, self.endings.clone()) {
-            Ok(pid) => {
+        match spawn(
+            &output,
+            &loading.show,
+            self.effective_fps(),
+            self.endings.clone(),
+        ) {
+            Ok(process) => {
+                let id = process.id;
                 let source = loading.show.source.clone();
                 self.present(
                     index,
                     Picture::External(External {
-                        pid,
+                        process,
                         stopped: false,
                         fallback,
                     }),
@@ -55,11 +75,12 @@ impl App {
                 );
                 self.hide(index);
                 self.sync_externals();
+                protocol::emit(&self.status());
                 let timer = Timer::from_duration(Duration::from_millis(1500));
                 let _ = self
                     .handle
                     .insert_source(timer, move |_, _, app: &mut App| {
-                        app.announce_external(&output, pid, &source);
+                        app.announce_external(&output, id, &source);
                         TimeoutAction::Drop
                     });
             }
@@ -68,15 +89,15 @@ impl App {
                 protocol::emit(&Event::Error {
                     output: Some(output),
                     source: Some(loading.show.source),
-                    message,
+                    message: format!("Native scene: {reason}. {message}"),
                 });
             }
         }
     }
 
     /// Says the scene is up once it has survived its start.
-    fn announce_external(&mut self, output: &str, pid: i32, source: &Path) {
-        if self.external_at(pid).is_some() {
+    fn announce_external(&mut self, output: &str, id: u64, source: &Path) {
+        if self.external_at(id).is_some() {
             protocol::emit(&Event::Ready {
                 output: output.to_owned(),
                 source: source.to_path_buf(),
@@ -86,7 +107,7 @@ impl App {
     }
 
     pub(super) fn ended(&mut self, ended: Ended) {
-        let Some(index) = self.external_at(ended.pid) else {
+        let Some(index) = self.external_at(ended.id) else {
             return;
         };
         let Some(shown) = self.screens[index].shown.take() else {
@@ -104,17 +125,19 @@ impl App {
             fallback: Some(fallback),
             ..
         }) = shown.picture
+            && self.rotation_key(&output).is_none()
         {
-            self.per_output.insert(output, fallback);
+            self.selection.set(fallback);
             self.refresh();
         }
+        protocol::emit(&self.status());
     }
 
-    fn external_at(&self, pid: i32) -> Option<usize> {
+    fn external_at(&self, id: u64) -> Option<usize> {
         self.screens.iter().position(|screen| {
             matches!(
                 screen.shown.as_ref().map(|shown| &shown.picture),
-                Some(Picture::External(external)) if external.pid == pid
+                Some(Picture::External(external)) if external.process.id == id
             )
         })
     }
@@ -128,8 +151,9 @@ impl App {
                 && external.stopped != paused
             {
                 let signal = if paused { libc::SIGSTOP } else { libc::SIGCONT };
-                unsafe { libc::kill(external.pid, signal) };
-                external.stopped = paused;
+                if external.process.signal(signal).is_ok() {
+                    external.stopped = paused;
+                }
             }
         }
     }
@@ -177,13 +201,11 @@ impl App {
 }
 
 pub(super) fn stop(external: &External) {
-    unsafe {
-        libc::kill(external.pid, libc::SIGCONT);
-        libc::kill(external.pid, libc::SIGTERM);
-    }
+    let _ = external.process.signal(libc::SIGCONT);
+    let _ = external.process.signal(libc::SIGTERM);
 }
 
-fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<i32, String> {
+fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<Process, String> {
     let program = std::env::var_os(OVERRIDE).unwrap_or_else(|| RENDERER.into());
     let scaling = match show.fit {
         Fit::Cover => "fill",
@@ -199,9 +221,15 @@ fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<i3
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     // It goes when we go, however we go.
+    let parent = std::process::id() as libc::pid_t;
     unsafe {
-        command.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
             Ok(())
         });
     }
@@ -212,40 +240,53 @@ fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<i3
         ),
         _ => format!("{}: {err}", PathBuf::from(&program).display()),
     })?;
-    let pid = child.id() as i32;
+    let process = match Process::open(child.id()) {
+        Ok(process) => process,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "cannot track scene renderer safely: {err}; Linux 5.3 or newer with pidfd support is required"
+            ));
+        }
+    };
+    let exit = match process.exit_fd() {
+        Ok(exit) => exit,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("cannot watch scene renderer exit: {err}"));
+        }
+    };
+    let id = process.id;
     let stderr = child.stderr.take();
     std::thread::spawn(move || {
-        let mut last: VecDeque<String> = VecDeque::new();
-        for line in stderr
-            .into_iter()
-            .flat_map(|err| BufReader::new(err).lines().map_while(Result::ok))
-        {
-            if !line.trim().is_empty() {
-                last.push_back(line);
-                if last.len() > 3 {
-                    last.pop_front();
+        let said = match stderr {
+            Some(mut stderr) => match super::diagnostics::collect(&exit, &mut stderr) {
+                Ok(tail) => tail,
+                Err(err) => {
+                    let _ = child.kill();
+                    format!("cannot read renderer diagnostics: {err}")
                 }
-            }
-        }
+            },
+            None => String::new(),
+        };
         let status = child
             .wait()
             .map(|status| status.to_string())
             .unwrap_or_default();
-        let said = last.into_iter().collect::<Vec<_>>().join(" / ");
         let why = if said.is_empty() {
             status
         } else {
             format!("{status}: {said}")
         };
-        let _ = ended.send(Ended { pid, why });
+        let _ = ended.send(Ended { id, why });
     });
-    Ok(pid)
+    Ok(process)
 }
 
 /// The still Wallpaper Engine keeps next to a project.
 fn preview(project: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(project.join("project.json")).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let preview = project.join(json.get("preview")?.as_str()?);
-    preview.is_file().then_some(preview)
+    let json: serde_json::Value = apolline_wall_protocol::source::read_project(project).ok()?;
+    apolline_wall_protocol::source::project_file(project, json.get("preview")?.as_str()?)
 }

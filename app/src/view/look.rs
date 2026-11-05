@@ -10,59 +10,21 @@ use crate::{App, Message, Tweak, style};
 pub fn editor<'a>(app: &'a App, item: &'a Item) -> Element<'a, Message> {
     let look = app.look;
     let saved = app.saved_look(&item.path);
-    let mut controls = column![
-        control(
-            "Brightness",
-            format!("{:+.0}%", look.brightness * 100.0),
-            slider(-1.0..=1.0, look.brightness, |v| Message::Look(
-                Tweak::Brightness(v)
-            ))
-            .step(0.02_f32)
-            .style(style::rail)
-            .into(),
-        ),
-        control(
-            "Contrast",
-            format!("{:.0}%", look.contrast * 100.0),
-            slider(0.0..=2.0, look.contrast, |v| Message::Look(
-                Tweak::Contrast(v)
-            ))
-            .step(0.02_f32)
-            .style(style::rail)
-            .into(),
-        ),
-        control(
-            "Saturation",
-            format!("{:.0}%", look.saturation * 100.0),
-            slider(0.0..=2.0, look.saturation, |v| Message::Look(
-                Tweak::Saturation(v)
-            ))
-            .step(0.02_f32)
-            .style(style::rail)
-            .into(),
-        ),
-    ]
-    .spacing(12);
-    if matches!(item.what, What::Video | What::Shader) {
-        controls = controls.push(control(
-            "Speed",
-            format!("{:.2}×", look.speed),
-            slider(0.25..=3.0, look.speed, |v| Message::Look(Tweak::Speed(v)))
-                .step(0.05_f32)
-                .style(style::rail)
-                .into(),
-        ));
-    }
-    controls = controls.push(
-        row![
-            text("Mirror").size(13),
-            space::horizontal(),
-            toggler(look.flip)
-                .on_toggle(|on| Message::Look(Tweak::Flip(on)))
-                .size(20)
-                .style(style::switch),
-        ]
-        .align_y(Alignment::Center),
+    let controls = controls(
+        look,
+        matches!(item.what, What::Video | What::Shader)
+            || (item.what == What::Scene
+                && app.daemon.as_ref().is_some_and(|daemon| {
+                    daemon.outputs.iter().any(|monitor| {
+                        monitor.animated_scene
+                            && monitor.source.as_ref() == Some(&item.path)
+                            && app
+                                .target
+                                .as_ref()
+                                .is_none_or(|target| target == &monitor.name)
+                    })
+                })),
+        Message::Look,
     );
     let mut actions = Row::new().spacing(6);
     if look != saved {
@@ -74,6 +36,68 @@ pub fn editor<'a>(app: &'a App, item: &'a Item) -> Element<'a, Message> {
         actions = actions.push(small("Reset", Message::ResetLook));
     }
     controls.push(actions).into()
+}
+
+pub fn controls(
+    look: Look,
+    animated: bool,
+    on_change: fn(crate::Tweak) -> Message,
+) -> iced::widget::Column<'static, Message> {
+    let mut controls = column![
+        control(
+            "Brightness",
+            format!("{:+.0}%", look.brightness * 100.0),
+            slider(-1.0..=1.0, look.brightness, move |v| on_change(
+                Tweak::Brightness(v)
+            ))
+            .step(0.02_f32)
+            .style(style::rail)
+            .into(),
+        ),
+        control(
+            "Contrast",
+            format!("{:.0}%", look.contrast * 100.0),
+            slider(0.0..=2.0, look.contrast, move |v| on_change(
+                Tweak::Contrast(v)
+            ))
+            .step(0.02_f32)
+            .style(style::rail)
+            .into(),
+        ),
+        control(
+            "Saturation",
+            format!("{:.0}%", look.saturation * 100.0),
+            slider(0.0..=2.0, look.saturation, move |v| on_change(
+                Tweak::Saturation(v)
+            ))
+            .step(0.02_f32)
+            .style(style::rail)
+            .into(),
+        ),
+    ]
+    .spacing(12);
+    if animated {
+        controls = controls.push(control(
+            "Speed",
+            format!("{:.2}×", look.speed),
+            slider(0.25..=3.0, look.speed, move |v| on_change(Tweak::Speed(v)))
+                .step(0.05_f32)
+                .style(style::rail)
+                .into(),
+        ));
+    }
+    controls = controls.push(
+        row![
+            text("Mirror").size(13),
+            space::horizontal(),
+            toggler(look.flip)
+                .on_toggle(move |on| on_change(Tweak::Flip(on)))
+                .size(20)
+                .style(style::switch),
+        ]
+        .align_y(Alignment::Center),
+    );
+    controls
 }
 
 fn control<'a>(

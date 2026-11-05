@@ -87,6 +87,7 @@ impl Gl {
         let gl = &self.gl;
         let (w, h) = canvas.size;
         unsafe {
+            crate::gl::clear_errors(gl);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(canvas.framebuffer));
             gl.disable(glow::BLEND);
             gl.disable(glow::SCISSOR_TEST);
@@ -106,6 +107,10 @@ impl Gl {
             gl.uniform_3_f32_slice(shader.accent.as_ref(), &inputs.accent);
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let error = gl.get_error();
+            if error != glow::NO_ERROR {
+                return Err(format!("drawing the shader failed (GL {error:#x})"));
+            }
         }
         Ok(())
     }
@@ -121,9 +126,13 @@ impl Gl {
         let mut rgba = vec![0; w * h * 4];
         let gl = &self.gl;
         unsafe {
+            crate::gl::clear_errors(gl);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(canvas.framebuffer));
             gl.bind_buffer(glow::PIXEL_PACK_BUFFER, None);
             gl.pixel_store_i32(glow::PACK_ALIGNMENT, 4);
+            gl.pixel_store_i32(glow::PACK_ROW_LENGTH, 0);
+            gl.pixel_store_i32(glow::PACK_SKIP_ROWS, 0);
+            gl.pixel_store_i32(glow::PACK_SKIP_PIXELS, 0);
             gl.read_pixels(
                 0,
                 0,
@@ -134,7 +143,16 @@ impl Gl {
                 glow::PixelPackData::Slice(Some(&mut rgba)),
             );
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let error = gl.get_error();
+            if error != glow::NO_ERROR {
+                return Err(format!("reading a poster failed (GL {error:#x})"));
+            }
         }
-        Ok(rgba.chunks_exact(w * 4).rev().flatten().copied().collect())
+        let row = w * 4;
+        for y in 0..h / 2 {
+            let (top, bottom) = rgba.split_at_mut((h - 1 - y) * row);
+            top[y * row..(y + 1) * row].swap_with_slice(&mut bottom[..row]);
+        }
+        Ok(rgba)
     }
 }

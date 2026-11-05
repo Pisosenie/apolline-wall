@@ -38,7 +38,7 @@ where
     Fut: Future<Output = bool>,
 {
     loop {
-        if let Ok(stream) = UnixStream::connect(protocol::socket_path()).await {
+        if let Ok(stream) = UnixStream::connect(protocol::client_socket_path()).await {
             let (read, mut write) = stream.into_split();
             let status = format!("{}\n", protocol::line(&Command::Status {}));
             if write.write_all(status.as_bytes()).await.is_ok() {
@@ -61,7 +61,7 @@ where
 
 /// Sends a command without waiting for anything back, for changes made while dragging.
 pub async fn send(command: Command) -> Result<(), String> {
-    let mut stream = UnixStream::connect(protocol::socket_path())
+    let mut stream = UnixStream::connect(protocol::client_socket_path())
         .await
         .map_err(|_| NOT_RUNNING.to_owned())?;
     let line = format!("{}\n", protocol::line(&command));
@@ -73,7 +73,7 @@ pub async fn send(command: Command) -> Result<(), String> {
 
 /// Sends a command and answers with the daemon's status after it, or with why it couldn't.
 pub async fn ask(command: Command) -> Result<Event, String> {
-    ask_at(&protocol::socket_path(), command).await
+    ask_at(&protocol::client_socket_path(), command).await
 }
 
 async fn ask_at(socket: &std::path::Path, command: Command) -> Result<Event, String> {

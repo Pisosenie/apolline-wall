@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[cfg(test)]
+use apolline_wall_protocol::steam::paths_in;
+use apolline_wall_protocol::steam::{libraries, roots};
 use serde::Deserialize;
 
 use crate::library::{self, Item, What};
@@ -26,40 +29,10 @@ struct Project {
 /// steamcmd downloaded for this app.
 pub fn folders() -> Vec<PathBuf> {
     let home = config::home();
-    let roots = [
-        ".local/share/Steam",
-        ".steam/steam",
-        ".var/app/com.valvesoftware.Steam/.local/share/Steam",
-    ]
-    .map(|root| home.join(root));
+    let roots = roots(&home);
     let mut found = folders_in(&libraries(&roots));
     found.extend(Some(steamcmd::content()).filter(|folder| folder.is_dir()));
     found
-}
-
-fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = Vec::new();
-    for root in roots {
-        let listed = std::fs::read_to_string(root.join("steamapps/libraryfolders.vdf"))
-            .map(|vdf| paths_in(&vdf))
-            .unwrap_or_default();
-        for library in std::iter::once(root.clone()).chain(listed) {
-            let canonical = library.canonicalize().unwrap_or(library);
-            if !found.contains(&canonical) {
-                found.push(canonical);
-            }
-        }
-    }
-    found
-}
-
-/// The `"path" "..."` lines of Steam's libraryfolders.vdf.
-fn paths_in(vdf: &str) -> Vec<PathBuf> {
-    vdf.lines()
-        .filter(|line| line.trim_start().starts_with("\"path\""))
-        .filter_map(|line| line.rsplit('"').nth(1))
-        .map(|path| PathBuf::from(path.replace("\\\\", "\\")))
-        .collect()
 }
 
 fn folders_in(libraries: &[PathBuf]) -> Vec<PathBuf> {
@@ -91,8 +64,7 @@ pub fn wallpapers(folder: &Path) -> Vec<Item> {
 
 pub fn read(dir: &Path) -> Option<Item> {
     let project_file = dir.join("project.json");
-    let project: Project =
-        serde_json::from_str(&std::fs::read_to_string(&project_file).ok()?).ok()?;
+    let project: Project = apolline_wall_protocol::source::read_project(dir).ok()?;
     let what = match project.kind.to_lowercase().as_str() {
         "video" => What::Video,
         "scene" => What::Scene,
@@ -101,7 +73,7 @@ pub fn read(dir: &Path) -> Option<Item> {
         _ => return None,
     };
     let path = match what {
-        What::Video => dir.join(&project.file),
+        What::Video => apolline_wall_protocol::source::project_file(dir, &project.file)?,
         _ => dir.to_path_buf(),
     };
     if what == What::Video && !path.is_file() {
@@ -116,8 +88,7 @@ pub fn read(dir: &Path) -> Option<Item> {
             .metadata()
             .and_then(|meta| meta.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH),
-        preview: Some(dir.join(&project.preview))
-            .filter(|preview| !project.preview.is_empty() && preview.is_file()),
+        preview: apolline_wall_protocol::source::project_file(dir, &project.preview),
         workshop: Some(folder_name.to_owned())
             .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_digit())),
         engine: true,

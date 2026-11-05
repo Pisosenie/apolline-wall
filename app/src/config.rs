@@ -1,27 +1,79 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use apolline_wall_protocol::protocol::Look;
 use serde::{Deserialize, Serialize};
 
 /// The app's own settings; what each monitor shows belongs to the daemon.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub folders: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub favorites: BTreeSet<PathBuf>,
+    #[serde(default = "rotation_minutes")]
+    pub rotation_minutes: u32,
     /// Workshop items rated Questionable; Mature ones are never shown.
     #[serde(default)]
     pub questionable: bool,
     /// How each wallpaper should look, by its path; plain ones aren't listed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub looks: BTreeMap<String, Look>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub look_presets: BTreeMap<String, Look>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub wallpaper_properties: BTreeMap<String, apolline_scene::properties::Values>,
     /// The Steam account steamcmd signs in with; its password is never kept here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steam_account: Option<String>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            folders: Vec::new(),
+            favorites: BTreeSet::new(),
+            rotation_minutes: 5,
+            questionable: false,
+            looks: BTreeMap::new(),
+            look_presets: BTreeMap::new(),
+            wallpaper_properties: BTreeMap::new(),
+            steam_account: None,
+        }
+    }
+}
+
 impl Config {
+    pub fn wallpaper_settings(&self, path: &Path) -> apolline_wall_protocol::playlist::Settings {
+        let key = path.to_string_lossy();
+        apolline_wall_protocol::playlist::Settings {
+            properties: self
+                .wallpaper_properties
+                .get(key.as_ref())
+                .cloned()
+                .unwrap_or_default(),
+            look: self
+                .looks
+                .get(key.as_ref())
+                .copied()
+                .filter(|look| !look.is_plain()),
+        }
+    }
+
+    pub fn playlist_settings(
+        &self,
+        sources: &[PathBuf],
+    ) -> BTreeMap<PathBuf, apolline_wall_protocol::playlist::Settings> {
+        sources
+            .iter()
+            .filter_map(|path| {
+                let settings = self.wallpaper_settings(path);
+                (!settings.is_plain()).then(|| (path.clone(), settings))
+            })
+            .collect()
+    }
+
     /// The usual places, then the ones added in Settings.
     pub fn all_folders(&self) -> Vec<PathBuf> {
         defaults()
@@ -29,6 +81,10 @@ impl Config {
             .chain(self.folders.iter().cloned())
             .collect()
     }
+}
+
+fn rotation_minutes() -> u32 {
+    5
 }
 
 pub fn home() -> PathBuf {
@@ -127,5 +183,36 @@ pub fn tilde(path: &Path) -> String {
     match path.strip_prefix(home()) {
         Ok(rest) if !home().as_os_str().is_empty() => format!("~/{}", rest.display()),
         _ => path.display().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn playlist_snapshot_keeps_only_selected_customizations() {
+        let mut config = Config::default();
+        let look = Look {
+            brightness: -0.2,
+            ..Default::default()
+        };
+        config.looks.insert("/w/a".into(), look);
+        config.looks.insert("/w/plain".into(), Look::default());
+        config.wallpaper_properties.insert(
+            "/w/scene".into(),
+            BTreeMap::from([("sun".into(), serde_json::json!(false))]),
+        );
+        config.wallpaper_properties.insert(
+            "/w/outside".into(),
+            BTreeMap::from([("sun".into(), serde_json::json!(true))]),
+        );
+        let sources = ["/w/a", "/w/plain", "/w/scene"].map(PathBuf::from);
+        let snapshot = config.playlist_settings(&sources);
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[Path::new("/w/a")].look, Some(look));
+        assert_eq!(snapshot[Path::new("/w/scene")].properties["sun"], false);
+        assert!(!snapshot.contains_key(Path::new("/w/outside")));
+        config.wallpaper_properties.clear();
+        assert_eq!(snapshot[Path::new("/w/scene")].properties["sun"], false);
     }
 }

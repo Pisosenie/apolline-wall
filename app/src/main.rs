@@ -4,6 +4,8 @@ mod daemon;
 mod download;
 mod engine;
 mod library;
+mod preview;
+mod properties;
 mod steamcmd;
 mod style;
 #[cfg(target_os = "linux")]
@@ -80,6 +82,7 @@ pub enum Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
     All,
+    Favorites,
     Pictures,
     Videos,
     Shaders,
@@ -87,6 +90,7 @@ pub enum Filter {
 }
 
 pub struct Daemon {
+    pub power: apolline_wall_protocol::power::Status,
     pub outputs: Vec<Monitor>,
     pub fps: u32,
     pub scale: Option<f32>,
@@ -114,6 +118,9 @@ pub struct App {
     pub look: Look,
     pub tray_at_login: bool,
     pub steam: download::Steam,
+    pub preview: Option<preview::Preview>,
+    pub property_editor: properties::Editor,
+    preview_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -130,14 +137,27 @@ pub enum Message {
     Scanned(Vec<Item>),
     Thumb(PathBuf, Option<Handle>),
     Select(PathBuf),
+    Preview(preview::Action),
+    Properties(properties::Action),
     Filter(Filter),
     Search(String),
     Target(Option<String>),
     Fit(Fit),
     Apply,
+    Favorite(PathBuf),
+    Rotate,
+    RotationInterval(u32),
+    Step(String, bool),
+    StopPlaylist(String),
     Pause(Option<String>, bool),
     Daemon(daemon::Update),
     Answered(Result<Event, String>),
+    /// The daemon's answer to a wallpaper applied with these properties, by its path.
+    Applied(
+        String,
+        apolline_scene::properties::Values,
+        Result<Event, String>,
+    ),
     Page(Page),
     Folder(String),
     AddFolder,
@@ -146,6 +166,7 @@ pub enum Message {
     Scale(f32),
     Limit,
     Start,
+    Power(view::power::Change),
     Rescan,
     Dismiss,
     Open(String),
@@ -161,12 +182,18 @@ pub enum Message {
 
 impl App {
     fn new(page: Page) -> (Self, Task<Message>) {
-        let config = config::load();
+        let mut config = config::load();
+        if config.rotation_minutes == 0 {
+            config.rotation_minutes = 5;
+        }
         let mut app = App {
             browser: workshop::Browser::new(config.questionable),
             look: Look::default(),
             tray_at_login: config::tray_at_login(),
             steam: download::Steam::new(config.steam_account.as_deref()),
+            preview: None,
+            property_editor: properties::Editor::default(),
+            preview_generation: 0,
             config,
             items: Vec::new(),
             thumbs: HashMap::new(),
@@ -204,7 +231,30 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.preview.is_some()
+            && matches!(
+                message,
+                Message::Search(_) | Message::Select(_) | Message::Filter(_) | Message::Page(_)
+            )
+        {
+            return Task::none();
+        }
         match message {
+            Message::Power(change) => {
+                let Some(daemon) = &self.daemon else {
+                    return Task::none();
+                };
+                let mut policy = daemon.power.policy.clone();
+                match change {
+                    view::power::Change::Lock(v) => policy.pause_on_lock = v,
+                    view::power::Change::Sleep(v) => policy.pause_on_sleep = v,
+                    view::power::Change::Fullscreen(v) => policy.pause_on_fullscreen = v,
+                    view::power::Change::Battery(v) => policy.battery = v,
+                }
+                self.ask(Command::Policy(policy))
+            }
+            Message::Preview(action) => self.preview(action),
+            Message::Properties(action) => self.properties(action),
             Message::Scanned(items) => {
                 self.queue = items
                     .iter()
@@ -225,7 +275,7 @@ impl App {
                         self.pick(path);
                     }
                 }
-                self.pump()
+                Task::batch([self.pump(), self.load_properties()])
             }
             Message::Thumb(path, handle) => {
                 self.busy = self.busy.saturating_sub(1);
@@ -236,8 +286,55 @@ impl App {
             }
             Message::Select(path) => {
                 self.pick(path);
+                self.load_properties()
+            }
+            Message::Favorite(path) => {
+                if !self.config.favorites.remove(&path) {
+                    self.config.favorites.insert(path);
+                }
+                self.notice = config::save(&self.config).err();
                 Task::none()
             }
+            Message::RotationInterval(minutes) => {
+                self.config.rotation_minutes = minutes.clamp(1, 60);
+                self.notice = config::save(&self.config).err();
+                Task::none()
+            }
+            Message::Rotate => {
+                let sources = self
+                    .visible()
+                    .into_iter()
+                    .filter(|item| item.what.missing().is_none())
+                    .map(|item| item.path.clone())
+                    .collect::<Vec<_>>();
+                if sources.is_empty() {
+                    return Task::none();
+                }
+                self.ask(Command::Playlist(
+                    apolline_wall_protocol::protocol::Playlist {
+                        output: self.target.clone(),
+                        settings: self.config.playlist_settings(&sources),
+                        sources,
+                        interval_secs: u64::from(self.config.rotation_minutes.clamp(1, 60)) * 60,
+                        fit: self.fit,
+                    },
+                ))
+            }
+            Message::Step(output, previous) => {
+                self.ask(Command::Step(apolline_wall_protocol::protocol::Step {
+                    output: Some(output),
+                    previous,
+                }))
+            }
+            Message::StopPlaylist(output) => self.ask(Command::Playlist(
+                apolline_wall_protocol::protocol::Playlist {
+                    output: Some(output),
+                    sources: Vec::new(),
+                    settings: Default::default(),
+                    interval_secs: 300,
+                    fit: self.fit,
+                },
+            )),
             Message::Look(tweak) => {
                 match tweak {
                     Tweak::Brightness(value) => self.look.brightness = value,
@@ -292,17 +389,39 @@ impl App {
             Message::Apply => match self
                 .picked()
                 .filter(|item| item.what.missing().is_none())
-                .map(|item| (item.path.clone(), item.what.takes_a_look()))
-            {
+                .map(|item| {
+                    (
+                        item.path.clone(),
+                        item.what.takes_a_look() || item.what == What::Scene,
+                    )
+                }) {
                 Some((source, takes_a_look)) => {
+                    let properties = if self.property_editor.path.as_ref() == Some(&source) {
+                        if !self.property_editor.can_apply()
+                            && let Some(error) = &self.property_editor.error
+                        {
+                            self.notice = Some(error.clone());
+                            return Task::none();
+                        }
+                        self.property_editor.values.clone()
+                    } else {
+                        Default::default()
+                    };
+                    let key = source.to_string_lossy().to_string();
                     self.keep_look();
-                    self.ask(Command::Show(Show {
+                    // Properties are kept only once the daemon has shown the wallpaper with
+                    // them, so an edit it refuses doesn't follow the wallpaper into playlists.
+                    let show = Command::Show(Show {
+                        properties: properties.clone(),
                         output: self.target.clone(),
                         source,
                         fit: self.fit,
                         transition_ms: 600,
                         look: Some(self.look).filter(|look| takes_a_look && !look.is_plain()),
-                    }))
+                    });
+                    Task::perform(daemon::ask(show), move |answer| {
+                        Message::Applied(key.clone(), properties.clone(), answer)
+                    })
                 }
                 None => Task::none(),
             },
@@ -321,6 +440,20 @@ impl App {
             })),
             Message::Answered(Ok(status)) => {
                 self.status(status);
+                Task::none()
+            }
+            Message::Applied(key, properties, Ok(status)) => {
+                if properties.is_empty() {
+                    self.config.wallpaper_properties.remove(&key);
+                } else {
+                    self.config.wallpaper_properties.insert(key, properties);
+                }
+                self.notice = config::save(&self.config).err();
+                self.status(status);
+                Task::none()
+            }
+            Message::Applied(_, _, Err(message)) => {
+                self.notice = Some(message);
                 Task::none()
             }
             Message::Answered(Err(message)) => {
@@ -430,12 +563,20 @@ impl App {
         let Some(path) = &self.selected else {
             return Vec::new();
         };
-        let shown = self.shown_on(path);
-        match &self.target {
-            Some(target) if shown.contains(&target.as_str()) => vec![target.clone()],
-            Some(_) => Vec::new(),
-            None => shown.into_iter().map(str::to_owned).collect(),
-        }
+        let scene = self.picked().is_some_and(|item| item.what == What::Scene);
+        self.daemon
+            .iter()
+            .flat_map(|daemon| &daemon.outputs)
+            .filter(|monitor| {
+                monitor.source.as_ref() == Some(path)
+                    && self
+                        .target
+                        .as_ref()
+                        .is_none_or(|target| target == &monitor.name)
+                    && (!scene || monitor.native_scene)
+            })
+            .map(|monitor| monitor.name.clone())
+            .collect()
     }
 
     fn adjust(&self, draft: bool) -> Task<Message> {
@@ -471,6 +612,7 @@ impl App {
             outputs,
             fps,
             scale,
+            power,
         } = event
         {
             if self.daemon.is_none() {
@@ -483,6 +625,7 @@ impl App {
                 self.target = None;
             }
             self.daemon = Some(Daemon {
+                power,
                 outputs,
                 fps,
                 scale,
@@ -525,6 +668,18 @@ impl App {
 
     fn subscription(&self) -> Subscription<Message> {
         let daemon = daemon::watch().map(Message::Daemon);
+        let preview_keys = if self.preview.is_some() {
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::Preview(preview::Action::Close)),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+        let daemon = Subscription::batch([daemon, preview_keys]);
         if self.browser.waiting.is_empty() {
             daemon
         } else {
@@ -545,6 +700,7 @@ impl App {
             .iter()
             .filter(|item| match self.filter {
                 Filter::All => true,
+                Filter::Favorites => self.config.favorites.contains(&item.path),
                 Filter::Pictures => item.what == What::Picture,
                 Filter::Videos => item.what == What::Video,
                 Filter::Shaders => item.what == What::Shader,

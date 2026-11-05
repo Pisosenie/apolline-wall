@@ -2,6 +2,8 @@
 //! desktop-type window per RandR monitor, which window managers keep under everything, drawn
 //! with EGL through Xlib, and a timer where Wayland would send frame callbacks.
 
+mod coverage;
+
 use std::ffi::c_void;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::ptr::NonNull;
@@ -20,8 +22,8 @@ use x11rb::properties::{WmSizeHints, WmSizeHintsSpecification};
 use x11rb::protocol::Event as XEvent;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
-    AtomEnum, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, PropMode,
-    StackMode, WindowClass,
+    AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux,
+    EventMask, PropMode, StackMode, WindowClass,
 };
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
@@ -45,6 +47,14 @@ x11rb::atom_manager! {
         _NET_WM_STATE_SKIP_PAGER,
         _NET_WM_DESKTOP,
         _NET_WM_NAME,
+        _NET_WM_STATE_FULLSCREEN,
+        _NET_WM_STATE_HIDDEN,
+        _NET_WM_WINDOW_OPACITY,
+        _NET_WM_PID,
+        _NET_CLIENT_LIST,
+        _NET_CLIENT_LIST_STACKING,
+        _NET_CURRENT_DESKTOP,
+        _NET_ACTIVE_WINDOW,
         UTF8_STRING,
     }
 }
@@ -52,6 +62,8 @@ x11rb::atom_manager! {
 pub(super) struct X11 {
     conn: XCBConnection,
     root: u32,
+    watched: std::collections::HashSet<u32>,
+    fullscreen: std::collections::HashSet<u32>,
     root_size: (u16, u16),
     atoms: Atoms,
     // The libraries the connection came from stay loaded as long as it lives.
@@ -124,6 +136,10 @@ pub(super) fn connect(
     {
         let _ = conn.randr_select_input(root, randr::NotifyMask::SCREEN_CHANGE);
     }
+    let _ = conn.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+    );
     let readable = unsafe { BorrowedFd::borrow_raw(conn.as_raw_fd()) }
         .try_clone_to_owned()
         .map_err(|err| format!("X11: {err}"))?;
@@ -140,6 +156,8 @@ pub(super) fn connect(
     let x11 = X11 {
         conn,
         root,
+        watched: Default::default(),
+        fullscreen: Default::default(),
         root_size,
         atoms,
         _xlib: xlib,
@@ -355,6 +373,7 @@ impl App {
                 }
             }
         }
+        self.x11_coverage();
     }
 
     fn x11_moved(&mut self, index: usize, monitor: &Monitor) {
@@ -375,15 +394,24 @@ impl App {
         self.place(index);
     }
 
-    pub(super) fn x11_events(&mut self) {
+    /// Handles what has arrived and says how many events that was.
+    pub(super) fn x11_events(&mut self) -> usize {
         let Some(x11) = self.x11() else {
-            return;
+            return 0;
         };
         let mut events = Vec::new();
-        while let Ok(Some(event)) = x11.conn.poll_for_event() {
-            events.push(event);
+        for _ in 0..512 {
+            match x11.conn.poll_for_event() {
+                Ok(Some(event)) => events.push(event),
+                _ => break,
+            }
         }
+        if events.len() == 512 {
+            self.wake.ping();
+        }
+        let count = events.len();
         let mut monitors_changed = false;
+        let mut coverage_changed = false;
         for event in events {
             match event {
                 XEvent::Expose(exposed) if exposed.count == 0 => {
@@ -395,6 +423,9 @@ impl App {
                     }
                 }
                 XEvent::ConfigureNotify(configured) => {
+                    coverage_changed |= self
+                        .x11()
+                        .is_some_and(|x11| x11.fullscreen.contains(&configured.window));
                     let size = (u32::from(configured.width), u32::from(configured.height));
                     if let Some(index) = self.screen_of_window(configured.window)
                         && let Surface::X11(window) = &mut self.screens[index].surface
@@ -406,13 +437,36 @@ impl App {
                         self.place(index);
                     }
                 }
+                XEvent::PropertyNotify(property) => {
+                    coverage_changed |= self
+                        .x11()
+                        .is_some_and(|x11| x11.coverage_property(property.window, property.atom));
+                }
+                XEvent::MapNotify(mapped) => {
+                    coverage_changed |= self
+                        .x11()
+                        .is_some_and(|x11| x11.fullscreen.contains(&mapped.window));
+                }
+                XEvent::UnmapNotify(unmapped) => {
+                    coverage_changed |= self
+                        .x11()
+                        .is_some_and(|x11| x11.fullscreen.contains(&unmapped.window));
+                }
+                XEvent::DestroyNotify(destroyed) => {
+                    coverage_changed |= self
+                        .x11()
+                        .is_some_and(|x11| x11.fullscreen.contains(&destroyed.window));
+                }
                 XEvent::RandrScreenChangeNotify(_) => monitors_changed = true,
                 _ => {}
             }
         }
         if monitors_changed {
             self.x11_monitors();
+        } else if coverage_changed {
+            self.x11_coverage();
         }
+        count
     }
 
     /// A frame after a short wait, since X11 doesn't say when the next one is wanted.

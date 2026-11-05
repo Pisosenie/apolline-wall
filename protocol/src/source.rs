@@ -1,5 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 
 const PICTURE: [&str; 5] = ["jpg", "jpeg", "png", "webp", "jxl"];
 
@@ -42,13 +43,55 @@ pub fn known(path: &Path) -> Option<Kind> {
     }
 }
 
+/// Reads project metadata with the same limit for library scans and renderer posters.
+pub fn read_project<T: serde::de::DeserializeOwned>(folder: &Path) -> Result<T, String> {
+    const LIMIT: u64 = 8 * 1024 * 1024;
+    let path = folder.join("project.json");
+    let fail = |error| format!("{}: {error}", path.display());
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    let file = options.open(&path).map_err(fail)?;
+    let metadata = file.metadata().map_err(fail)?;
+    if !metadata.is_file() || metadata.len() > LIMIT {
+        return Err(format!(
+            "{} must be a regular file no larger than 8 MiB",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1).read_to_end(&mut bytes).map_err(fail)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(format!("{} grew past 8 MiB", path.display()));
+    }
+    serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Resolves metadata's local files inside the project, including symlink targets.
+pub fn project_file(folder: &Path, name: &str) -> Option<PathBuf> {
+    if name.is_empty() {
+        return None;
+    }
+    let path = Path::new(name);
+    if path
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
+    {
+        return None;
+    }
+    let root = folder.canonicalize().ok()?;
+    let file = folder.join(path);
+    let resolved = file.canonicalize().ok()?;
+    (resolved.starts_with(root) && resolved.is_file()).then_some(file)
+}
+
 /// Where the daemon leaves a still of a video or shader it has shown.
 pub fn poster_path(source: &Path) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("apolline");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = crate::runtime::path();
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     dir.join(format!("poster-{:016x}.png", hasher.finish()))
@@ -57,6 +100,52 @@ pub fn poster_path(source: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_metadata_is_bounded_and_files_stay_inside_the_folder() {
+        let folder = std::env::temp_dir().join(format!("wall-metadata-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let metadata = folder.join("project.json");
+        std::fs::write(&metadata, br#"{"preview":"poster.png"}"#).unwrap();
+        let project: serde_json::Value = read_project(&folder).unwrap();
+        assert_eq!(project["preview"], "poster.png");
+        std::fs::write(folder.join("poster.png"), b"picture").unwrap();
+        assert_eq!(
+            project_file(&folder, "poster.png"),
+            Some(folder.join("poster.png"))
+        );
+        assert!(project_file(&folder, "../project.json").is_none());
+        assert!(project_file(&folder, metadata.to_str().unwrap()).is_none());
+        assert!(project_file(&folder, "").is_none());
+        #[cfg(unix)]
+        {
+            let link = folder.join("outside");
+            let outside = folder.with_extension("outside");
+            std::fs::write(&outside, b"outside project").unwrap();
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(project_file(&folder, "outside").is_none());
+            std::fs::remove_file(link).unwrap();
+            std::fs::remove_file(outside).unwrap();
+            let inside = folder.join("inside");
+            std::os::unix::fs::symlink(folder.join("poster.png"), &inside).unwrap();
+            assert_eq!(project_file(&folder, "inside"), Some(inside));
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&metadata)
+            .unwrap()
+            .set_len(8 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(
+            read_project::<serde_json::Value>(&folder)
+                .unwrap_err()
+                .contains("8 MiB")
+        );
+        std::fs::remove_file(&metadata).unwrap();
+        std::fs::create_dir(&metadata).unwrap();
+        assert!(read_project::<serde_json::Value>(&folder).is_err());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 
     #[test]
     fn sources_are_told_apart_by_extension() {

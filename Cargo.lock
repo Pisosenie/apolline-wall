@@ -105,11 +105,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "apolline-scene"
+version = "0.1.0"
+dependencies = [
+ "glow",
+ "image",
+ "libc",
+ "lz4_flex",
+ "serde_json",
+]
+
+[[package]]
 name = "apolline-wall"
 version = "0.1.0"
 dependencies = [
+ "apolline-scene",
  "apolline-wall-protocol",
  "fast_image_resize",
+ "futures-util",
  "glow",
  "glutin",
  "image",
@@ -119,16 +132,19 @@ dependencies = [
  "serde",
  "serde_json",
  "smithay-client-toolkit 0.20.0",
+ "tokio",
  "toml",
  "wayland-backend",
  "x11-dl",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]
 name = "apolline-wall-protocol"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -137,6 +153,7 @@ dependencies = [
 name = "apolline-wallpapers"
 version = "0.1.0"
 dependencies = [
+ "apolline-scene",
  "apolline-wall-protocol",
  "iced",
  "image",
@@ -2043,6 +2060,12 @@ name = "lru"
 version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+
+[[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 
 [[package]]
 name = "malloc_buf"

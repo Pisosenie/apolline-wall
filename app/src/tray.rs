@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use apolline_wall_protocol::protocol::{Command, Event, Monitor, Pause, Show};
+use apolline_wall_protocol::protocol::{Command, Event, Monitor, Pause, Playlist, Show, Step};
 use ksni::menu::{StandardItem, SubMenu};
 use ksni::{MenuItem, TrayMethods};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -20,9 +20,12 @@ pub fn run() -> Result<(), String> {
     runtime.block_on(serve())
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Action {
     Pause(Option<String>, bool),
     Random(Option<String>),
+    Step(String, bool),
+    StopPlaylist(String),
     Open,
 }
 
@@ -61,6 +64,23 @@ async fn serve() -> Result<(), String> {
                 daemon::send(Command::Pause(Pause { output, paused })).await
             }
             Action::Random(output) => random(output, &outputs).await,
+            Action::Step(output, previous) => {
+                daemon::send(Command::Step(Step {
+                    output: Some(output),
+                    previous,
+                }))
+                .await
+            }
+            Action::StopPlaylist(output) => {
+                daemon::send(Command::Playlist(Playlist {
+                    output: Some(output),
+                    sources: Vec::new(),
+                    settings: Default::default(),
+                    interval_secs: 300,
+                    fit: Default::default(),
+                }))
+                .await
+            }
             Action::Open => open_window(),
         };
         if let Err(message) = done {
@@ -126,7 +146,7 @@ impl ksni::Tray for Tray {
                 for monitor in outputs {
                     menu.push(monitor_menu(monitor));
                 }
-                let all_paused = !outputs.is_empty() && outputs.iter().all(|m| m.paused);
+                let all_paused = !outputs.is_empty() && outputs.iter().all(|m| m.manual_paused);
                 menu.push(MenuItem::Separator);
                 menu.push(item(
                     if all_paused {
@@ -154,18 +174,75 @@ fn monitor_menu(monitor: &Monitor) -> MenuItem<Tray> {
         .as_deref()
         .map_or("nothing".to_owned(), engine::title);
     let name = monitor.name.clone();
-    let paused = monitor.paused;
+    let paused = monitor.manual_paused;
     let toggle = name.clone();
+    let mut submenu = vec![item(if paused { "Resume" } else { "Pause" }, move |tray| {
+        tray.act(Action::Pause(Some(toggle.clone()), !paused))
+    })];
+    if let Some(reason) = &monitor.pause_reason {
+        submenu.push(notice(reason));
+    }
+    if monitor.playlist {
+        submenu.push(MenuItem::Separator);
+        if let Some(status) = &monitor.playlist_status {
+            submenu.push(notice(&status.to_string()));
+        }
+        let can_step = monitor
+            .playlist_status
+            .as_ref()
+            .is_none_or(|status| status.can_step);
+        let previous = name.clone();
+        let next = name.clone();
+        for (label, output, backwards) in [
+            ("Previous wallpaper", previous, true),
+            ("Next wallpaper", next, false),
+        ] {
+            let mut control = StandardItem {
+                label: label.into(),
+                enabled: can_step,
+                ..Default::default()
+            };
+            control.activate =
+                Box::new(move |tray: &mut Tray| tray.act(Action::Step(output.clone(), backwards)));
+            submenu.push(control.into());
+        }
+        let stop = name.clone();
+        let label = if monitor
+            .playlist_status
+            .as_ref()
+            .is_some_and(|status| status.shared)
+        {
+            "Stop shared playlist"
+        } else {
+            "Stop playlist"
+        };
+        submenu.push(item(label, move |tray| {
+            tray.act(Action::StopPlaylist(stop.clone()))
+        }));
+        if monitor
+            .playlist_status
+            .as_ref()
+            .is_some_and(|status| status.exhausted())
+        {
+            submenu.push(notice("Choose a wallpaper or start the playlist again"));
+        }
+        submenu.push(MenuItem::Separator);
+    }
+    submenu.push(item("Random wallpaper", move |tray| {
+        tray.act(Action::Random(Some(name.clone())))
+    }));
     SubMenu {
         label: format!("{} · {showing}", monitor.name),
-        submenu: vec![
-            item(if paused { "Resume" } else { "Pause" }, move |tray| {
-                tray.act(Action::Pause(Some(toggle.clone()), !paused))
-            }),
-            item("Random wallpaper", move |tray| {
-                tray.act(Action::Random(Some(name.clone())))
-            }),
-        ],
+        submenu,
+        ..Default::default()
+    }
+    .into()
+}
+
+fn notice(label: &str) -> MenuItem<Tray> {
+    StandardItem {
+        label: label.into(),
+        enabled: false,
         ..Default::default()
     }
     .into()
@@ -196,17 +273,14 @@ async fn random(output: Option<String>, outputs: &[Monitor]) -> Result<(), Strin
     let Some(item) = pick(&choices) else {
         return Err("no other wallpaper in the library to pick".into());
     };
-    let look = config
-        .looks
-        .get(&item.path.to_string_lossy().into_owned())
-        .copied()
-        .filter(|look| !look.is_plain());
+    let settings = config.wallpaper_settings(&item.path);
     daemon::send(Command::Show(Show {
+        properties: settings.properties,
         output,
         source: item.path.clone(),
         fit: Default::default(),
         transition_ms: 600,
-        look,
+        look: settings.look,
     }))
     .await
 }
@@ -227,4 +301,72 @@ fn open_window() -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|err| format!("opening the window: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitor(exhausted: bool) -> Monitor {
+        let mut monitor: Monitor =
+            serde_json::from_str(r#"{"name":"DP-1","paused":false,"playlist":true}"#).unwrap();
+        monitor.playlist_status = Some(apolline_wall_protocol::playlist::Status {
+            position: 2,
+            total: 3,
+            skipped: if exhausted { 3 } else { 1 },
+            shared: true,
+            suspended: false,
+            can_step: !exhausted,
+        });
+        monitor
+    }
+
+    #[test]
+    fn tray_steps_and_stop_target_the_selected_monitor() {
+        let (actions, mut received) = unbounded_channel();
+        let mut tray = Tray {
+            outputs: None,
+            actions,
+        };
+        let MenuItem::SubMenu(menu) = monitor_menu(&monitor(false)) else {
+            panic!("expected monitor submenu")
+        };
+        let mut checked = 0;
+        for item in menu.submenu {
+            let MenuItem::Standard(item) = item else {
+                continue;
+            };
+            let expected = match item.label.as_str() {
+                "Previous wallpaper" => Action::Step("DP-1".into(), true),
+                "Next wallpaper" => Action::Step("DP-1".into(), false),
+                "Stop shared playlist" => Action::StopPlaylist("DP-1".into()),
+                _ => continue,
+            };
+            checked += 1;
+            assert!(item.enabled);
+            (item.activate)(&mut tray);
+            assert_eq!(received.try_recv().unwrap(), expected);
+        }
+        assert_eq!(checked, 3);
+        assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn an_exhausted_playlist_disables_steps_but_keeps_stop_available() {
+        let MenuItem::SubMenu(menu) = monitor_menu(&monitor(true)) else {
+            panic!("expected monitor submenu")
+        };
+        let controls: Vec<_> = menu
+            .submenu
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Standard(item) => Some((item.label, item.enabled)),
+                _ => None,
+            })
+            .collect();
+        assert!(controls.contains(&("Next wallpaper".into(), false)));
+        assert!(controls.contains(&("Previous wallpaper".into(), false)));
+        assert!(controls.contains(&("Stop shared playlist".into(), true)));
+        assert!(controls.contains(&("Shared playlist stopped: no playable entries".into(), false)));
+    }
 }

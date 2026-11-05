@@ -1,11 +1,20 @@
+mod diagnostics;
+mod native;
 mod playback;
+mod policy;
+mod poster;
+mod presentation;
+mod process;
+mod rotation;
 mod scenery;
+mod selection;
 mod shading;
 mod socket;
+mod system;
 mod wayland;
 mod x11;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,11 +26,11 @@ use smithay_client_toolkit::reexports::calloop::channel::{self, Sender};
 use smithay_client_toolkit::reexports::calloop::ping::{self, Ping};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle};
 
-use apolline_wall_protocol::source::{self, Kind, poster_path};
+use apolline_wall_protocol::source::{self, Kind};
 
 use crate::gl::{self, Canvas, Gl, Target, Texture};
-use crate::picture::{self, Pixels, UPSIDE_DOWN, WHOLE};
-use crate::protocol::{self, Adjust, Command, Event, Fit, Monitor, Show};
+use crate::loading::{self, Batch, Job, Pending};
+use crate::protocol::{self, Adjust, Command, Event, Monitor, Show};
 use crate::state::{self, State};
 use crate::video::{Mpv, Platform, Player};
 
@@ -69,16 +78,26 @@ pub fn run(mode: Mode) -> Result<(), String> {
             .map_err(|err| err.to_string())?;
     }
 
-    let (loads, loaded) = channel::channel();
+    // Backpressure keeps decoded scenes and full-sized pixel buffers out of an unbounded queue.
+    let (loads, loaded) = mpsc::sync_channel(2);
+    let (load_wake, load_woken) = ping::make_ping().map_err(|err| err.to_string())?;
     handle
-        .insert_source(loaded, |event, _, app: &mut App| {
-            if let channel::Event::Msg(loaded) = event {
+        .insert_source(load_woken, move |_, _, app: &mut App| {
+            while let Ok(loaded) = loaded.try_recv() {
                 app.loaded(loaded);
             }
         })
         .map_err(|err| err.to_string())?;
     let (decoder, batches) = mpsc::channel();
-    std::thread::spawn(move || decode(batches, loads));
+    std::thread::spawn(move || {
+        loading::run(batches, |loaded| {
+            if loads.send(loaded).is_err() {
+                return false;
+            }
+            load_wake.ping();
+            true
+        })
+    });
 
     let (endings, ends) = channel::channel();
     handle
@@ -94,17 +113,42 @@ pub fn run(mode: Mode) -> Result<(), String> {
         .insert_source(woken, |_, _, app: &mut App| app.tick())
         .map_err(|err| err.to_string())?;
 
+    if let Mode::Child = mode {
+        let output_wake = wake.clone();
+        apolline_wall_protocol::output::start(move || output_wake.ping())?;
+    }
+    let (posters, jobs) = mpsc::sync_channel(2);
+    let (posted, results) = channel::channel();
+    handle
+        .insert_source(results, |event, _, app: &mut App| {
+            if let channel::Event::Msg(saved) = event {
+                app.posted(saved);
+                app.pump_posters();
+            }
+        })
+        .map_err(|err| err.to_string())?;
+    std::thread::spawn(move || poster::run(jobs, posted));
+    let (system_updates, system_events) = channel::channel();
+    handle
+        .insert_source(system_events, |event, _, app: &mut App| {
+            if let channel::Event::Msg(update) = event {
+                app.system(update);
+            }
+        })
+        .map_err(|err| err.to_string())?;
+    system::start(system_updates);
     let mut app = App {
         screens: Vec::new(),
         videos: HashMap::new(),
         gl: Gl::new(display)?,
         desktop,
         platform,
-        everywhere: None,
-        per_output: HashMap::new(),
-        paused_everywhere: false,
-        paused: HashSet::new(),
+        selection: selection::Selection::default(),
+        manual: crate::power::ManualPause::default(),
+        power: crate::power::Power::default(),
         decoder,
+        posters,
+        pending_posters: HashMap::new(),
         mpv: None,
         wake,
         endings,
@@ -113,6 +157,8 @@ pub fn run(mode: Mode) -> Result<(), String> {
         scale: None,
         accent: shading::DEFAULT_ACCENT,
         persist: None,
+        rotations: HashMap::new(),
+        rotation_timer: None,
         generation: 0,
         next_screen: 0,
         exit: false,
@@ -125,6 +171,15 @@ pub fn run(mode: Mode) -> Result<(), String> {
         event_loop
             .dispatch(None, &mut app)
             .map_err(|err| err.to_string())?;
+        if apolline_wall_protocol::output::failed() {
+            app.close_videos();
+            app.close_externals();
+            let _ = std::fs::remove_file(protocol::socket_path());
+            return Err(
+                "parent stopped consuming stdout events; restart the child and request status"
+                    .into(),
+            );
+        }
         app.flush();
     }
     app.close_videos();
@@ -162,8 +217,30 @@ fn restore(app: &mut App) -> Option<Persist> {
     match state::load(&path) {
         Ok(saved) => {
             for command in saved.commands() {
-                app.command(command);
+                match command {
+                    Command::Show(show) => match &show.output {
+                        None => app.selection.everywhere = Some(show),
+                        Some(output) => {
+                            app.selection.per_output.insert(output.clone(), show);
+                        }
+                    },
+                    other => app.command(other),
+                }
             }
+            app.selection.inherited = saved
+                .outputs
+                .iter()
+                .filter(|(name, entry)| {
+                    entry.follows_default
+                        && !saved.playlists.contains_key(*name)
+                        && saved
+                            .wallpaper
+                            .as_ref()
+                            .is_some_and(|default| default.source == entry.source)
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
+            app.restore_rotation_positions();
             Some(Persist {
                 path,
                 good: saved.clone(),
@@ -197,11 +274,12 @@ struct App {
     desktop: Desktop,
     /// What libmpv is told about the display, for hardware decoding.
     platform: Platform,
-    everywhere: Option<Show>,
-    per_output: HashMap<String, Show>,
-    paused_everywhere: bool,
-    paused: HashSet<String>,
+    selection: selection::Selection,
+    manual: crate::power::ManualPause,
+    power: crate::power::Power,
     decoder: mpsc::Sender<Batch>,
+    posters: mpsc::SyncSender<poster::Job>,
+    pending_posters: HashMap<String, poster::Job>,
     mpv: Option<Rc<Mpv>>,
     wake: Ping,
     endings: Sender<scenery::Ended>,
@@ -210,6 +288,8 @@ struct App {
     scale: Option<f32>,
     accent: [f32; 3],
     persist: Option<Persist>,
+    rotations: HashMap<Option<String>, rotation::Rotation>,
+    rotation_timer: Option<smithay_client_toolkit::reexports::calloop::RegistrationToken>,
     generation: u64,
     next_screen: u64,
     exit: bool,
@@ -223,6 +303,7 @@ struct Persist {
 }
 
 struct Screen {
+    covered: bool,
     /// Stays the same while the monitor is there, for work that comes back later.
     id: u64,
     target: Option<Target>,
@@ -240,12 +321,24 @@ struct Screen {
 
 enum Picture {
     Still(Texture),
+    Native(Texture),
     Video(PathBuf),
     Shader(Box<Scene>),
     External(scenery::External),
 }
 
+impl Picture {
+    fn native(&self) -> bool {
+        matches!(self, Self::Native(_)) || self.native_animated()
+    }
+
+    fn native_animated(&self) -> bool {
+        matches!(self, Self::Shader(scene) if matches!(scene.shader, SceneShader::Native(_, _)))
+    }
+}
+
 struct Shown {
+    generation: u64,
     picture: Picture,
     show: Show,
     size: (u32, u32),
@@ -258,6 +351,7 @@ struct Fade {
 }
 
 struct Loading {
+    _pending: Pending,
     generation: u64,
     show: Show,
     size: (u32, u32),
@@ -272,40 +366,35 @@ struct Video {
     waiting: bool,
     paused: bool,
     poster: Option<PathBuf>,
-    unannounced: Vec<String>,
+    unannounced: crate::announcement::Pending,
 }
 
 /// A shader drawn into its own canvas for one monitor, at a capped rate.
 struct Scene {
-    shader: gl::Shader,
+    shader: SceneShader,
     canvas: Canvas,
-    time: f32,
-    last: Option<Instant>,
-    frame: i32,
-    timer: bool,
+    clock: crate::animation::Clock,
+    timer: Option<smithay_client_toolkit::reexports::calloop::RegistrationToken>,
 }
 
-struct Batch {
-    source: PathBuf,
-    fit: Fit,
-    jobs: Vec<Job>,
-}
-
-struct Job {
-    screen: u64,
-    generation: u64,
-    size: (u32, u32),
-}
-
-struct Loaded {
-    screen: u64,
-    generation: u64,
-    source: PathBuf,
-    result: Result<Pixels, String>,
+enum SceneShader {
+    Toy(gl::Shader),
+    Native(apolline_scene::Renderer, protocol::Fit),
 }
 
 impl App {
     fn command(&mut self, command: Command) {
+        if let Command::Show(show) = &command
+            && !show.properties.is_empty()
+            && source::kind(&show.source) != Kind::Scene
+        {
+            protocol::emit(&Event::Error {
+                output: show.output.clone(),
+                source: Some(show.source.clone()),
+                message: "user properties are supported for native scene wallpapers".into(),
+            });
+            return;
+        }
         if let Some(persist) = &mut self.persist
             && persist.state.record(&command)
             && let Err(message) = state::save(&persist.path, &persist.state)
@@ -319,47 +408,42 @@ impl App {
         // Every client hears what changed, not only the one that asked.
         let announce = matches!(
             command,
-            Command::Pause(_) | Command::Limits(_) | Command::Uniforms(_) | Command::Adjust(_)
+            Command::Policy(_)
+                | Command::Pause(_)
+                | Command::Limits(_)
+                | Command::Uniforms(_)
+                | Command::Adjust(_)
         );
         match command {
+            Command::Session(session) => {
+                self.power.conditions.shell_locked = session.locked;
+                self.sync_policy();
+                protocol::emit(&self.status());
+            }
+            Command::Policy(policy) => {
+                self.power.policy = policy;
+                self.sync_policy();
+            }
+            Command::Playlist(list) => self.playlist(list),
+            Command::Step(step) => self.step_playlist(step),
             Command::Show(show) => {
+                match &show.output {
+                    None => self.rotations.clear(),
+                    Some(output) => {
+                        self.rotations.remove(&Some(output.clone()));
+                    }
+                }
                 for screen in &mut self.screens {
                     if show.output.as_ref().is_none_or(|name| *name == screen.name) {
                         screen.failed = None;
                     }
                 }
-                match &show.output {
-                    None => {
-                        self.per_output.clear();
-                        self.everywhere = Some(show);
-                    }
-                    Some(name) => {
-                        self.per_output.insert(name.clone(), show);
-                    }
-                }
+                self.selection.set(show);
                 self.refresh();
             }
             Command::Pause(pause) => {
-                match pause.output {
-                    None => {
-                        self.paused_everywhere = pause.paused;
-                        self.paused.clear();
-                    }
-                    Some(name) if pause.paused => {
-                        self.paused.insert(name);
-                    }
-                    Some(name) => {
-                        self.paused.remove(&name);
-                    }
-                }
-                self.sync_pauses();
-                self.sync_externals();
-                self.pause_scenes();
-                for index in 0..self.screens.len() {
-                    if self.screens[index].fade.is_some() {
-                        self.draw(index);
-                    }
-                }
+                self.manual.set(pause.output.as_deref(), pause.paused);
+                self.sync_policy();
             }
             Command::Limits(limits) => self.limit(limits),
             Command::Uniforms(uniforms) => self.tint(uniforms),
@@ -374,40 +458,22 @@ impl App {
     /// A new look for what is shown now, kept in the wanted wallpapers so a later refresh
     /// doesn't take it back.
     fn adjust(&mut self, adjust: Adjust) {
-        let look = Some(adjust.look);
-        match &adjust.output {
-            None => {
-                for show in self
-                    .everywhere
-                    .iter_mut()
-                    .chain(self.per_output.values_mut())
-                {
-                    show.look = look;
-                }
-            }
-            Some(name) => match (self.per_output.get_mut(name), &self.everywhere) {
-                (Some(show), _) => show.look = look,
-                (None, Some(everywhere)) => {
-                    let show = Show {
-                        output: Some(name.clone()),
-                        look,
-                        ..everywhere.clone()
-                    };
-                    self.per_output.insert(name.clone(), show);
-                }
-                (None, None) => {}
-            },
-        }
+        self.selection.adjust(&adjust);
+        let look = Some(adjust.look).filter(|look| !look.is_plain());
         for index in 0..self.screens.len() {
             let screen = &mut self.screens[index];
             if adjust
                 .output
                 .as_ref()
                 .is_none_or(|name| *name == screen.name)
-                && let Some(shown) = &mut screen.shown
             {
-                shown.show.look = look;
-                self.restyle(index);
+                if let Some(loading) = &mut screen.loading {
+                    loading.show.look = look;
+                }
+                if let Some(shown) = &mut screen.shown {
+                    shown.show.look = look;
+                    self.restyle(index);
+                }
             }
         }
     }
@@ -427,6 +493,11 @@ impl App {
 
     fn status(&self) -> Event {
         Event::Status {
+            power: apolline_wall_protocol::power::Status {
+                policy: self.power.policy.clone(),
+                conditions: self.power.conditions,
+                effective_fps: self.effective_fps(),
+            },
             outputs: self
                 .screens
                 .iter()
@@ -434,6 +505,18 @@ impl App {
                     name: screen.name.clone(),
                     source: screen.shown.as_ref().map(|shown| shown.show.source.clone()),
                     paused: self.is_paused(&screen.name),
+                    manual_paused: self.manual_paused(&screen.name),
+                    pause_reason: self.pause_reason(&screen.name).map(str::to_owned),
+                    playlist: self.rotation_key(&screen.name).is_some(),
+                    playlist_status: self.rotation_status(&screen.name),
+                    native_scene: screen
+                        .shown
+                        .as_ref()
+                        .is_some_and(|shown| shown.picture.native()),
+                    animated_scene: screen
+                        .shown
+                        .as_ref()
+                        .is_some_and(|shown| shown.picture.native_animated()),
                     look: screen
                         .shown
                         .as_ref()
@@ -446,23 +529,14 @@ impl App {
         }
     }
 
-    fn is_paused(&self, name: &str) -> bool {
-        self.paused_everywhere || self.paused.contains(name)
-    }
-
     fn wanted(&self, index: usize) -> Option<Show> {
-        let name = &self.screens[index].name;
-        self.per_output
-            .get(name)
-            .or(self.everywhere.as_ref())
-            .cloned()
+        self.selection.wanted(&self.screens[index].name)
     }
 
     fn refresh(&mut self) {
-        let mut jobs: HashMap<(PathBuf, Fit), Vec<Job>> = HashMap::new();
+        let mut jobs: HashMap<PathBuf, Vec<Job>> = HashMap::new();
         let mut videos = Vec::new();
         let mut scenes = Vec::new();
-        let mut externals = Vec::new();
         let mut restyled = Vec::new();
         for index in 0..self.screens.len() {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
@@ -473,6 +547,17 @@ impl App {
             if screen.failed.as_ref() == Some(&show) {
                 continue;
             }
+            if !show.properties.is_empty() && kind != Kind::Scene {
+                let source = show.source.clone();
+                let output = self.screens[index].name.clone();
+                self.give_up(index, show);
+                protocol::emit(&Event::Error {
+                    output: Some(output),
+                    source: Some(source),
+                    message: "user properties are supported for native scene wallpapers".into(),
+                });
+                continue;
+            }
             let latest = match (&screen.loading, &screen.shown) {
                 (Some(loading), _) => Some((&loading.show, loading.size)),
                 (None, Some(shown)) => Some((&shown.show, shown.size)),
@@ -480,9 +565,18 @@ impl App {
             };
             if latest.is_some_and(|(latest, latest_size)| {
                 latest.source == show.source
+                    && latest.properties == show.properties
                     && latest.fit == show.fit
-                    && (matches!(kind, Kind::Video | Kind::Scene) || latest_size == size)
+                    && (kind == Kind::Video
+                        || matches!(
+                            screen.shown.as_ref().map(|s| &s.picture),
+                            Some(Picture::External(_))
+                        )
+                        || latest_size == size)
             }) {
+                if let Some(loading) = &mut self.screens[index].loading {
+                    loading.show.look = show.look;
+                }
                 if let Some(shown) = &mut self.screens[index].shown
                     && shown.show.look.unwrap_or_default() != show.look.unwrap_or_default()
                 {
@@ -492,27 +586,30 @@ impl App {
                 continue;
             }
             self.generation += 1;
+            let pending = Pending::default();
             match kind {
                 Kind::Video => videos.push(index),
                 Kind::Shader => scenes.push(index),
-                Kind::Scene => externals.push(index),
-                Kind::Picture => jobs
-                    .entry((show.source.clone(), show.fit))
-                    .or_default()
-                    .push(Job {
+                Kind::Scene | Kind::Picture => {
+                    jobs.entry(show.source.clone()).or_default().push(Job {
                         screen: screen.id,
                         generation: self.generation,
                         size,
-                    }),
+                        fit: show.fit,
+                        properties: show.properties.clone(),
+                        ticket: pending.ticket(),
+                    })
+                }
             }
             self.screens[index].loading = Some(Loading {
+                _pending: pending,
                 generation: self.generation,
                 show,
                 size,
             });
         }
-        for ((source, fit), jobs) in jobs {
-            let _ = self.decoder.send(Batch { source, fit, jobs });
+        for (source, jobs) in jobs {
+            let _ = self.decoder.send(Batch { source, jobs });
         }
         for index in videos {
             self.start_video(index);
@@ -520,211 +617,49 @@ impl App {
         for index in scenes {
             self.start_scene(index);
         }
-        for index in externals {
-            self.start_external(index);
-        }
         for index in restyled {
             self.restyle(index);
         }
+        self.close_unused_videos();
         self.fit_canvases();
-    }
-
-    fn loaded(&mut self, loaded: Loaded) {
-        let Some(index) = self.index_of(loaded.screen) else {
-            return;
-        };
-        let screen = &mut self.screens[index];
-        if screen.loading.as_ref().map(|l| l.generation) != Some(loaded.generation) {
-            return;
-        }
-        let Some(loading) = screen.loading.take() else {
-            return;
-        };
-        let texture = loaded.result.and_then(|pixels| self.gl.upload(&pixels));
-        give_back_memory();
-        let output = self.screens[index].name.clone();
-        match texture {
-            Ok(texture) => {
-                let source = loading.show.source.clone();
-                self.present(index, Picture::Still(texture), loading);
-                protocol::emit(&Event::Ready {
-                    output,
-                    poster: source.clone(),
-                    source,
-                });
-            }
-            Err(message) => {
-                self.give_up(index, loading.show);
-                protocol::emit(&Event::Error {
-                    output: Some(output),
-                    source: Some(loaded.source),
-                    message,
-                });
-            }
-        }
+        self.schedule_rotations();
     }
 
     fn give_up(&mut self, index: usize, show: Show) {
+        let mut back = None;
         if let Some(persist) = &mut self.persist
             && persist.state.undo(&show, &persist.good)
-            && let Err(message) = state::save(&persist.path, &persist.state)
         {
-            protocol::emit(&Event::Error {
-                output: None,
-                source: None,
-                message,
-            });
+            if let Err(message) = state::save(&persist.path, &persist.state) {
+                protocol::emit(&Event::Error {
+                    output: None,
+                    source: None,
+                    message,
+                });
+            }
+            // The last wallpaper that showed comes back on screen too, not only into the file.
+            back = persist
+                .state
+                .commands()
+                .into_iter()
+                .find_map(|command| match command {
+                    Command::Show(saved) if saved.output == show.output => Some(saved),
+                    _ => None,
+                });
         }
+        self.rotation_failed(index, &show);
         self.screens[index].failed = Some(show);
-    }
-
-    fn present(&mut self, index: usize, picture: Picture, loading: Loading) {
-        if let Some(persist) = &mut self.persist {
-            persist.good.keep(&loading.show);
-        }
-        let paused = self.is_paused(&self.screens[index].name);
-        let was_external = matches!(
-            self.screens[index]
-                .shown
-                .as_ref()
-                .map(|shown| &shown.picture),
-            Some(Picture::External(_))
-        );
-        let external = matches!(picture, Picture::External(_));
-        let before = self.screens[index]
-            .shown
-            .take()
-            .and_then(|old| self.retire(index, old));
-        let screen = &mut self.screens[index];
-        if let Some(fade) = screen.fade.take() {
-            self.gl.delete(fade.before.texture);
-        }
-        let duration = Duration::from_millis(loading.show.transition_ms.into());
-        match before {
-            Some(before) if !paused && !external && !duration.is_zero() => {
-                screen.fade = Some(Fade {
-                    before,
-                    start: Instant::now(),
-                    duration,
-                })
+        if let Some(back) = back {
+            match &back.output {
+                None => self.selection.everywhere = Some(back),
+                Some(output) => {
+                    self.selection.per_output.insert(output.clone(), back);
+                }
             }
-            Some(before) => self.gl.delete(before.texture),
-            None => {}
+            // Not from inside whatever load or draw is failing right now.
+            let _ = self.handle.insert_idle(|app| app.refresh());
         }
-        screen.shown = Some(Shown {
-            picture,
-            show: loading.show,
-            size: loading.size,
-        });
-        if was_external && !external {
-            self.unhide(index);
-        }
-        self.draw(index);
-        self.close_unused_videos();
-        self.sync_pauses();
-    }
-
-    fn retire(&self, index: usize, old: Shown) -> Option<gl::Layer> {
-        match old.picture {
-            Picture::Still(texture) => Some(gl::Layer::new(texture, WHOLE, old.show.look)),
-            Picture::Video(source) => {
-                let canvas = self.videos.get(&source)?.canvas.as_ref()?;
-                let target = self.screens[index].target.as_ref()?;
-                Some(gl::Layer::new(
-                    self.gl.snapshot(canvas).ok()?,
-                    picture::placement(old.show.fit, canvas.size, target.size()),
-                    old.show.look,
-                ))
-            }
-            Picture::Shader(scene) => {
-                let texture = self.gl.snapshot(&scene.canvas).ok();
-                self.drop_scene(*scene);
-                Some(gl::Layer::new(texture?, UPSIDE_DOWN, old.show.look))
-            }
-            Picture::External(external) => {
-                scenery::stop(&external);
-                None
-            }
-        }
-    }
-
-    fn draw(&mut self, index: usize) {
-        let paused = self.is_paused(&self.screens[index].name);
-        let screen = &self.screens[index];
-        let (Some(target), Some(shown)) = (&screen.target, &screen.shown) else {
-            return;
-        };
-        let after = match &shown.picture {
-            Picture::Still(texture) => gl::Layer::new(*texture, WHOLE, shown.show.look),
-            Picture::Video(source) => {
-                let Some(canvas) = self.videos.get(source).and_then(|v| v.canvas.as_ref()) else {
-                    return;
-                };
-                gl::Layer::new(
-                    canvas.texture,
-                    picture::placement(shown.show.fit, canvas.size, target.size()),
-                    shown.show.look,
-                )
-            }
-            Picture::Shader(scene) => {
-                gl::Layer::new(scene.canvas.texture, UPSIDE_DOWN, shown.show.look)
-            }
-            Picture::External(_) => return,
-        };
-        let progress = match &screen.fade {
-            Some(fade) if !paused => {
-                fade.start.elapsed().as_secs_f32() / fade.duration.as_secs_f32()
-            }
-            _ => 1.0,
-        };
-        let fading = progress < 1.0;
-        let playing = matches!(shown.picture, Picture::Video(_) | Picture::Shader(_)) && !paused;
-        let before = screen
-            .fade
-            .as_ref()
-            .filter(|_| fading)
-            .map(|fade| fade.before);
-        if (fading || playing) && !screen.frame_pending {
-            self.want_frame(index);
-        }
-        let screen = &mut self.screens[index];
-        screen.stale = false;
-        let Some(target) = &screen.target else {
-            return;
-        };
-        let eased = progress * progress * (3.0 - 2.0 * progress);
-        if let Err(message) = self.gl.draw(target, before, after, eased.min(1.0)) {
-            protocol::emit(&Event::Error {
-                output: Some(screen.name.clone()),
-                source: None,
-                message,
-            });
-        }
-        if !fading && let Some(fade) = screen.fade.take() {
-            self.gl.delete(fade.before.texture);
-        }
-    }
-
-    fn frame_done(&mut self, index: usize) {
-        self.screens[index].frame_pending = false;
-        if let Some(Picture::Video(source)) = self.screens[index].shown.as_ref().map(|s| &s.picture)
-        {
-            let source = source.clone();
-            if self.videos.get(&source).is_some_and(|video| video.waiting) {
-                self.pump(&source);
-            }
-        }
-        let shader = matches!(
-            self.screens[index].shown.as_ref().map(|s| &s.picture),
-            Some(Picture::Shader(_))
-        );
-        if shader && !self.is_paused(&self.screens[index].name) {
-            self.tick_scene(index);
-        }
-        let screen = &self.screens[index];
-        if !screen.frame_pending && (screen.fade.is_some() || screen.stale) {
-            self.draw(index);
-        }
+        protocol::emit(&self.status());
     }
 
     fn buffer_size(&self, index: usize) -> Option<(u32, u32)> {
@@ -778,6 +713,7 @@ impl App {
     fn add_screen(&mut self, name: String, surface: Surface) -> usize {
         self.next_screen += 1;
         self.screens.push(Screen {
+            covered: false,
             id: self.next_screen,
             target: None,
             name,
@@ -807,8 +743,14 @@ impl App {
     /// X11 also answers requests made while drawing, and those can carry events with them
     /// that no readiness of its socket would announce.
     fn flush(&mut self) {
+        // Replies X11 sends while events are being handled can carry more events, which
+        // no readiness of its socket would announce, so it drains until a pass finds none.
         if let Desktop::X11(_) = self.desktop {
-            self.x11_events();
+            for _ in 0..8 {
+                if self.x11_events() == 0 {
+                    break;
+                }
+            }
         }
         if let Desktop::X11(x11) = &self.desktop {
             x11.flush();
@@ -817,9 +759,10 @@ impl App {
 
     fn forget(&mut self, index: usize) {
         let mut screen = self.screens.remove(index);
+        self.pending_posters.remove(&screen.name);
         drop(screen.target.take());
         let still = screen.shown.and_then(|shown| match shown.picture {
-            Picture::Still(texture) => Some(texture),
+            Picture::Still(texture) | Picture::Native(texture) => Some(texture),
             Picture::Video(_) => None,
             Picture::Shader(scene) => {
                 self.drop_scene(*scene);
@@ -841,30 +784,7 @@ impl App {
             Surface::X11(window) => self.x11_close(window),
         }
         self.close_unused_videos();
-    }
-}
-
-fn decode(batches: mpsc::Receiver<Batch>, loads: Sender<Loaded>) {
-    for batch in batches {
-        let decoded = picture::decode(&batch.source);
-        for job in batch.jobs {
-            let (width, height) = job.size;
-            let result = decoded
-                .as_ref()
-                .map_err(Clone::clone)
-                .and_then(|image| picture::fit(image, width, height, batch.fit));
-            let loaded = Loaded {
-                screen: job.screen,
-                generation: job.generation,
-                source: batch.source.clone(),
-                result,
-            };
-            if loads.send(loaded).is_err() {
-                return;
-            }
-        }
-        drop(decoded);
-        give_back_memory();
+        self.schedule_rotations();
     }
 }
 

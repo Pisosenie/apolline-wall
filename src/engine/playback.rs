@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use super::{App, Picture, Video, poster_path};
+use super::{App, Picture, Video};
 use crate::picture;
 use crate::protocol::{self, Event, Fit};
 use crate::video::{Happened, Mpv, Player};
+use apolline_wall_protocol::source::poster_path;
 
 impl App {
     pub(super) fn start_video(&mut self, index: usize) {
@@ -55,7 +56,7 @@ impl App {
             waiting: false,
             paused: false,
             poster: None,
-            unannounced: Vec::new(),
+            unannounced: Default::default(),
         })
     }
 
@@ -65,6 +66,7 @@ impl App {
         };
         let source = loading.show.source.clone();
         let output = self.screens[index].name.clone();
+        let generation = loading.generation;
         self.present(index, Picture::Video(source.clone()), loading);
         self.restyle(index);
         let Some(video) = self.videos.get_mut(&source) else {
@@ -76,7 +78,7 @@ impl App {
                 source,
                 poster: poster.clone(),
             }),
-            None => video.unannounced.push(output),
+            None => video.unannounced.wait(output, generation),
         }
     }
 
@@ -122,7 +124,14 @@ impl App {
                     return;
                 };
                 video.poster = Some(poster.clone());
-                for output in video.unannounced.drain(..) {
+                let mut pending = std::mem::take(&mut video.unannounced);
+                let recipients = pending.take(|output, generation| {
+                    self.screens.iter().find(|screen| screen.name == output)
+                        .and_then(|screen| screen.shown.as_ref())
+                        .is_some_and(|shown| shown.generation == generation
+                            && matches!(&shown.picture, Picture::Video(current) if current == source))
+                });
+                for output in recipients {
                     protocol::emit(&Event::Ready {
                         output,
                         source: source.to_path_buf(),
@@ -271,9 +280,18 @@ impl App {
             }
             if loading && let Some(loading) = self.screens[index].loading.take() {
                 self.give_up(index, loading.show);
+            } else if showing && let Some(shown) = &self.screens[index].shown {
+                self.give_up(index, shown.show.clone());
+            }
+            if showing {
+                self.screens[index].shown = None;
+                if let Some(fade) = self.screens[index].fade.take() {
+                    self.gl.delete(fade.before.texture);
+                }
             }
         }
         self.close(source);
+        protocol::emit(&self.status());
     }
 
     pub(super) fn close_unused_videos(&mut self) {
