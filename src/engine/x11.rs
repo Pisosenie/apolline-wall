@@ -3,6 +3,7 @@
 //! with EGL through Xlib, and a timer where Wayland would send frame callbacks.
 
 mod coverage;
+mod edid;
 
 use std::ffi::c_void;
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -56,6 +57,7 @@ x11rb::atom_manager! {
         _NET_CURRENT_DESKTOP,
         _NET_ACTIVE_WINDOW,
         UTF8_STRING,
+        EDID,
     }
 }
 
@@ -95,6 +97,8 @@ struct Monitor {
     name: String,
     position: (i16, i16),
     size: (u16, u16),
+    /// The monitor's own name from its EDID, when its output has one.
+    identity: Option<String>,
 }
 
 /// Opens the display through Xlib, which EGL needs, and talks over its XCB connection.
@@ -192,6 +196,12 @@ impl X11 {
                     .unwrap_or_else(|| format!("monitor-{}", monitor.name)),
                 position: (monitor.x, monitor.y),
                 size: (monitor.width, monitor.height),
+                identity: monitor
+                    .outputs
+                    .first()
+                    .and_then(|&output| self.edid(output))
+                    .as_deref()
+                    .and_then(edid::identity),
             })
             .collect();
         if monitors.is_empty() {
@@ -199,9 +209,21 @@ impl X11 {
                 name: "screen".into(),
                 position: (0, 0),
                 size: self.root_size,
+                identity: None,
             }];
         }
         monitors
+    }
+
+    /// The EDID block an output reports, as RandR keeps it.
+    fn edid(&self, output: randr::Output) -> Option<Vec<u8>> {
+        let reply = self
+            .conn
+            .randr_get_output_property(output, self.atoms.EDID, AtomEnum::ANY, 0, 64, false, false)
+            .ok()?
+            .reply()
+            .ok()?;
+        (reply.format == 8).then_some(reply.data)
     }
 
     fn atom_name(&self, atom: u32) -> Option<String> {
@@ -360,8 +382,11 @@ impl App {
                     let opened = self.x11().map(|x11| x11.open(&monitor));
                     match opened {
                         Some(Ok(window)) => {
-                            // RandR gives connectors only; the monitor itself would take its EDID.
-                            let index = self.add_screen(monitor.name, Surface::X11(window), None);
+                            let index = self.add_screen(
+                                monitor.name,
+                                Surface::X11(window),
+                                monitor.identity,
+                            );
                             self.place(index);
                         }
                         Some(Err(message)) => protocol::emit(&Event::Error {
