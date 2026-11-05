@@ -284,6 +284,7 @@ pub(super) fn advance(
         }
         SceneShader::Native(renderer, fit) => {
             renderer.set_daytime(daytime());
+            renderer.animate(frame.time, frame.delta);
             gl.run_native(renderer, &scene.canvas, *fit, frame.time, frame.delta)?
         }
     }

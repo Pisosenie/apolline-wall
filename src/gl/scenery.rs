@@ -8,8 +8,21 @@ use crate::protocol::Fit;
 impl Gl {
     pub fn compile_native(&self, scene: &Prepared) -> Result<Renderer, String> {
         self.current()?;
-        unsafe { Renderer::new(&self.gl, &scene.scene, &scene.layers) }
-            .map_err(|err| err.to_string())
+        let mut renderer = unsafe { Renderer::new(&self.gl, &scene.scene, &scene.layers) }
+            .map_err(|err| err.to_string())?;
+        // Each screen runs the scene's scripts on its own.
+        match scene.stage() {
+            Ok(stage) => {
+                if let Some(stage) = stage {
+                    renderer.script(stage);
+                }
+                Ok(renderer)
+            }
+            Err(err) => {
+                self.drop_native(renderer);
+                Err(err.to_string())
+            }
+        }
     }
 
     pub fn drop_native(&self, renderer: Renderer) {
