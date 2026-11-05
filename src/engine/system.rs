@@ -78,8 +78,9 @@ pub(super) fn start(updates: Sender<Update>) {
     });
 }
 
-/// Follows one service for the daemon's life. A service that isn't there is tried again
-/// after a wait that grows to ten minutes, so a system without it costs next to nothing.
+/// Follows one service for the daemon's life. When it isn't on the bus, it waits for the bus
+/// to say the service has appeared rather than asking again and again; when it is there but
+/// following it still fails, it tries again after a wait that grows to ten minutes.
 async fn follow(service: Service, updates: Sender<Update>) {
     let mut wait = Duration::from_secs(5);
     loop {
@@ -92,13 +93,47 @@ async fn follow(service: Service, updates: Sender<Update>) {
         if result.is_err() && updates.send(Update::Available(service, false)).is_err() {
             return;
         }
-        wait = if started.elapsed() > Duration::from_secs(60) {
-            Duration::from_secs(5)
-        } else {
-            (wait * 2).min(Duration::from_secs(600))
-        };
-        tokio::time::sleep(wait).await;
+        if started.elapsed() > Duration::from_secs(60) {
+            wait = Duration::from_secs(5);
+        }
+        if !appeared(service.bus_name()).await {
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(600));
+        }
     }
+}
+
+impl Service {
+    fn bus_name(self) -> &'static str {
+        match self {
+            Service::Sleep | Service::Lock => "org.freedesktop.login1",
+            Service::Battery => "org.freedesktop.UPower",
+        }
+    }
+}
+
+/// Waits until `name` gets an owner on the system bus, and says whether it waited: false when
+/// the name already has one, or the bus can't be asked.
+async fn appeared(name: &'static str) -> bool {
+    let waited = async {
+        let connection = Connection::system().await.ok()?;
+        let bus = zbus::fdo::DBusProxy::new(&connection).await.ok()?;
+        let mut changes = bus
+            .receive_name_owner_changed_with_args(&[(0, name)])
+            .await
+            .ok()?;
+        let owned = zbus::names::BusName::try_from(name).ok()?;
+        if bus.name_has_owner(owned).await.ok()? {
+            return None;
+        }
+        while let Some(change) = changes.next().await {
+            if change.args().is_ok_and(|args| args.new_owner().is_some()) {
+                return Some(());
+            }
+        }
+        None
+    };
+    waited.await.is_some()
 }
 
 fn said(err: impl std::fmt::Display) -> String {

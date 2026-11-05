@@ -19,20 +19,27 @@ pub struct Pixels {
     pub rgba: Vec<u8>,
 }
 
+/// The longest side a picture may have.
+const SIDE: u32 = 16384;
+
 pub fn decode(path: &Path) -> Result<Source, String> {
     let fail = |err: &dyn std::fmt::Display| format!("{}: {err}", path.display());
     let mut reader = ImageReader::open(path)
         .map_err(|err| fail(&err))?
         .with_guessed_format()
         .map_err(|err| fail(&err))?;
+    // Up to 16384 pixels a side: a large photo or a panorama decodes once and is scaled down
+    // to the monitor straight after, so its full size is only held for a moment.
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(16384);
-    limits.max_image_height = Some(16384);
-    limits.max_alloc = Some(256 * 1024 * 1024);
+    limits.max_image_width = Some(SIDE);
+    limits.max_image_height = Some(SIDE);
+    limits.max_alloc = Some(u64::from(SIDE) * u64::from(SIDE) * 4);
     reader.limits(limits);
     let mut decoder = reader.into_decoder().map_err(|err| fail(&err))?;
     let (w, h) = decoder.dimensions();
-    pixel_bytes(w, h).map_err(|err| fail(&err))?;
+    if w == 0 || h == 0 {
+        return Err(fail(&"the picture is empty"));
+    }
     let orientation = decoder.orientation().map_err(|err| fail(&err))?;
     let mut image = DynamicImage::from_decoder(decoder).map_err(|err| fail(&err))?;
     image.apply_orientation(orientation);

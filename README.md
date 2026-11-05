@@ -135,7 +135,7 @@ backpressure instead of accumulating full-sized images.
 In child mode stdout events are written off the render loop through a short queue. A parent
 that reads slowly gets every event in order; while the queue is full only the newest status
 waits, since statuses are snapshots. A broken output stream ends the child session, and the
-parent restarts it and asks for the status again. Standalone daemon clients receive events through the socket.
+parent restarts it and asks for the status again. A standalone daemon writes the same events to stdout, which the systemd journal keeps, and to every socket client; its stdout going away doesn't stop it.
 External scene renderers require Linux 5.3+ with pidfd support: signals target a process
 handle and each launch has a separate event identity. Native still-scene posters are capped
 at 640×360, shader posters keep the full canvas for the lock screen, and PNG encoding runs on a worker; a stale completion never announces a newer

@@ -113,10 +113,11 @@ pub fn run(mode: Mode) -> Result<(), String> {
         .insert_source(woken, |_, _, app: &mut App| app.tick())
         .map_err(|err| err.to_string())?;
 
-    if let Mode::Child = mode {
-        let output_wake = wake.clone();
-        apolline_wall_protocol::output::start(move || output_wake.ping())?;
-    }
+    // Events go to stdout in both modes: the parent reads them in child mode, the journal
+    // keeps them for a daemon. Only a child ends when nobody reads them any more.
+    let child = matches!(mode, Mode::Child);
+    let output_wake = wake.clone();
+    apolline_wall_protocol::output::start(move || output_wake.ping())?;
     let (posters, jobs) = mpsc::sync_channel(2);
     let (posted, results) = channel::channel();
     handle
@@ -171,7 +172,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         event_loop
             .dispatch(None, &mut app)
             .map_err(|err| err.to_string())?;
-        if apolline_wall_protocol::output::failed() {
+        if child && apolline_wall_protocol::output::failed() {
             app.close_videos();
             app.close_externals();
             let _ = std::fs::remove_file(protocol::socket_path());
