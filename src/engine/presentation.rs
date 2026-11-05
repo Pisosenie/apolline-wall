@@ -32,9 +32,7 @@ impl App {
                     Ok(native) => {
                         let (picture, pixels) = match native {
                             Native::Still(texture, pixels) => (Picture::Native(texture), pixels),
-                            Native::Moving(scene, pixels) => {
-                                (Picture::Shader(Box::new(scene)), pixels)
-                            }
+                            Native::Moving(scene, pixels) => (Picture::Shader(scene), pixels),
                         };
                         let generation = loading.generation;
                         let source = loading.show.source.clone();

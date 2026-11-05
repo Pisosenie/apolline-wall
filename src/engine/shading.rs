@@ -270,7 +270,7 @@ pub(super) fn advance(
     scene: &mut Scene,
 ) -> Result<(), String> {
     let frame = scene.clock.tick(Instant::now(), speed, running, fps);
-    match &scene.shader {
+    match &mut scene.shader {
         SceneShader::Toy(shader) => {
             let inputs = gl::Inputs {
                 time: frame.time,
@@ -283,6 +283,7 @@ pub(super) fn advance(
             gl.run(shader, &scene.canvas, &inputs)?;
         }
         SceneShader::Native(renderer, fit) => {
+            renderer.set_daytime(daytime());
             gl.run_native(renderer, &scene.canvas, *fit, frame.time, frame.delta)?
         }
     }
@@ -296,6 +297,11 @@ unsafe extern "C" {
 
 pub(super) fn local_time_zone() {
     unsafe { tzset() };
+}
+
+/// How far through the local day it is, 0 to 1, for scenes that change with it.
+pub(super) fn daytime() -> f32 {
+    date()[3] / 86_400.0
 }
 
 /// Shadertoy's iDate: year, month from zero, day, and seconds since local midnight.

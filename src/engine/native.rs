@@ -5,7 +5,7 @@ use crate::{gl, picture};
 
 pub(super) enum Native {
     Still(gl::Texture, picture::Pixels),
-    Moving(Scene, picture::Pixels),
+    Moving(Box<Scene>, picture::Pixels),
 }
 
 impl App {
@@ -18,7 +18,9 @@ impl App {
         let size = loading.size;
         let fit = loading.show.fit;
         picture::pixel_bytes(size.0, size.1)?;
-        let renderer = self.gl.compile_native(prepared)?;
+        let mut renderer = self.gl.compile_native(prepared)?;
+        // A still scene keeps the time of day it was drawn at.
+        renderer.set_daytime(shading::daytime());
         // Introspection can find a time declaration whose value the GPU optimizes away.
         if !renderer.animated() {
             return self
@@ -60,7 +62,7 @@ impl App {
         )
         .and_then(|()| self.gl.scene_poster(&scene.canvas));
         match result {
-            Ok(pixels) => Ok(Native::Moving(scene, pixels)),
+            Ok(pixels) => Ok(Native::Moving(Box::new(scene), pixels)),
             Err(error) => {
                 self.drop_scene(scene);
                 Err(error)
