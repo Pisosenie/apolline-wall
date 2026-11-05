@@ -93,10 +93,9 @@ fn scene(mut batch: Batch, mut send: impl FnMut(Loaded) -> bool) -> bool {
         if !job.ticket.cancelled() {
             let key = serde_json::to_string(&job.properties).unwrap_or_default();
             if prepared.as_ref().is_none_or(|(cached, _)| cached != &key) {
-                let result = if std::env::var_os("APOLLINE_WALL_SCENE_RENDERER").is_some() {
-                    Err("an external scene renderer was selected".into())
-                } else {
-                    crate::native::load(&batch.source, &job.properties).map(Arc::new)
+                let result = match external_only() {
+                    Some(reason) => Err(reason),
+                    None => crate::native::load(&batch.source, &job.properties).map(Arc::new),
                 };
                 prepared = Some((key, result));
             }
@@ -158,6 +157,14 @@ fn process(
         }
     }
     true
+}
+
+/// Naming another program for linux-wallpaperengine's part doesn't stop the daemon drawing
+/// what it can itself; `APOLLINE_WALL_SCENES=external` does.
+fn external_only() -> Option<String> {
+    std::env::var_os("APOLLINE_WALL_SCENES")
+        .is_some_and(|value| value == "external")
+        .then(|| "APOLLINE_WALL_SCENES=external hands every scene to the external renderer".into())
 }
 
 #[cfg(test)]

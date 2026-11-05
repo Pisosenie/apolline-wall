@@ -106,6 +106,7 @@ A project outside the native subset, or a web wallpaper, is drawn by [linux-wall
 - If it stops on its own, the `error` carries its last words and the monitor goes back to what it showed before.
 - Changes to and from an externally rendered project don't crossfade.
 - `APOLLINE_WALL_SCENE_RENDERER` names another program that takes the same arguments; the tests use [`tests/scenes/stand-in.sh`](tests/scenes/stand-in.sh).
+- `APOLLINE_WALL_SCENES=external` hands every scene to that program, even ones the daemon could draw itself. Either way the journal says why a scene went there.
 
 ## Favorites and rotation
 

@@ -145,6 +145,27 @@ else
     echo "no swaybg to stand in for linux-wallpaperengine, skipping scenes" >&2
 fi
 
+# A scene the daemon draws itself through apolline-scene, from the sibling repository's
+# synthetic project: no renderer process, and the desktop changes.
+demo=$root/../apolline-scene/tools/demo-scene.py
+if [ -f "$demo" ]; then
+    python3 "$demo" "$scenes/native" --still > /dev/null
+    grim "$out/n0-before-native.png"
+    before=$(shown)
+    send '{"show":{"source":"'"$scenes"'/native","transition_ms":0}}'
+    ready $((before + 1))
+    sleep 0.5
+    grim "$out/n1-native-scene.png"
+    differ n0-before-native.png n1-native-scene.png "a native scene shows"
+    if pgrep -P $wall -x swaybg > /dev/null; then
+        echo "a native scene went to linux-wallpaperengine: yes"
+    else
+        echo "a native scene went to linux-wallpaperengine: no"
+    fi
+else
+    echo "no apolline-scene next to this repository, skipping native scenes" >&2
+fi
+
 send '{"show":{"source":"/nowhere/missing.jpg"}}'
 send '{"lights":{"on":true}}'
 sleep 0.5

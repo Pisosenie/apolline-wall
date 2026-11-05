@@ -51,6 +51,11 @@ impl App {
             return;
         };
         let output = self.screens[index].name.clone();
+        // Why it isn't drawn here, for the journal: what a scene needs that isn't done yet.
+        eprintln!(
+            "apolline-wall: {} goes to linux-wallpaperengine: {reason}",
+            loading.show.source.display()
+        );
         let fallback = self.screens[index].shown.as_ref().map(|shown| Show {
             output: Some(output.clone()),
             ..shown.show.clone()
