@@ -391,6 +391,12 @@ fn inspector(app: &App) -> Element<'_, Message> {
         bottom = bottom.push(text(missing).size(12).color(style::SOFT));
     }
     bottom = bottom.push(apply);
+    bottom = bottom.push(
+        button(text("Not working? Report it").size(12))
+            .padding([5, 10])
+            .style(style::secondary)
+            .on_press(Message::Report),
+    );
     if let Some(notice) = &app.notice {
         bottom = bottom.push(notice_line(notice));
     }

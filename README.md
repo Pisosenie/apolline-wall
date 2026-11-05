@@ -41,6 +41,7 @@ apolline-wall status
 - **Look.** Brightness, contrast, saturation and a mirror for pictures, videos, shaders and active native still scenes, and speed for videos and shaders. While the wallpaper is on the chosen monitor every change shows there at once as a draft; **Apply** keeps it, **Revert** goes back. Each wallpaper remembers its look.
 - **Tray.** `apolline-wallpapers --tray` puts it in the tray without the window: pause, resume and a random wallpaper for each monitor, and the window a click away. Settings can start it at login through XDG autostart; on niri or Hyprland add the command to your startup.
 - **Now playing.** What each monitor shows, with pause.
+- **Report a problem.** "Not working? Report it" saves a plain-text report about the wallpaper, the system and the daemon's last errors to Downloads, with your home folder and user name taken out, ready to attach to an issue.
 
 Thumbnails are cached in `~/.cache/apolline-wall`; videos get theirs from ffmpeg, shaders once the daemon has shown them, and animated Workshop previews a frame from their middle. Workshop previews are kept to 150 MB, oldest out first. Workshop titles in Chinese, Japanese or Korean need a CJK font such as `noto-fonts-cjk`.
 

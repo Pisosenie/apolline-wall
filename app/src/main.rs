@@ -6,6 +6,7 @@ mod engine;
 mod library;
 mod preview;
 mod properties;
+mod report;
 mod steamcmd;
 mod style;
 #[cfg(target_os = "linux")]
@@ -110,6 +111,8 @@ pub struct App {
     pub page: Page,
     pub daemon: Option<Daemon>,
     pub notice: Option<String>,
+    /// What went wrong lately, newest last, for a problem report.
+    errors: VecDeque<String>,
     pub folder: String,
     pub fps: u32,
     pub scale: f32,
@@ -153,6 +156,8 @@ pub enum Message {
     Daemon(daemon::Update),
     Answered(Result<Event, String>),
     /// The daemon's answer to a wallpaper applied with these properties, by its path.
+    /// Saves a problem report about the picked wallpaper.
+    Report,
     Applied(
         String,
         apolline_scene::properties::Values,
@@ -207,6 +212,7 @@ impl App {
             page,
             daemon: None,
             notice: None,
+            errors: VecDeque::new(),
             folder: String::new(),
             fps: 30,
             scale: 1.0,
@@ -457,7 +463,34 @@ impl App {
                 Task::none()
             }
             Message::Answered(Err(message)) => {
+                self.remember_error(&message);
                 self.notice = Some(message);
+                Task::none()
+            }
+            Message::Report => {
+                let errors: Vec<String> = self.errors.iter().cloned().collect();
+                let saved = self.picked().map(|item| {
+                    report::Report {
+                        item,
+                        daemon: self.daemon.as_ref(),
+                        errors: &errors,
+                    }
+                    .save()
+                });
+                match saved {
+                    Some(Ok(path)) => {
+                        self.notice = Some(format!(
+                            "Saved a report to {}: attach it where you report the problem. Your home folder and user name are taken out.",
+                            config::tilde(&path)
+                        ));
+                        if let Some(folder) = path.parent() {
+                            let folder = folder.to_string_lossy().into_owned();
+                            self.open(&folder);
+                        }
+                    }
+                    Some(Err(message)) => self.notice = Some(message),
+                    None => {}
+                }
                 Task::none()
             }
             Message::Daemon(daemon::Update::Event(event)) => self.heard(event),
@@ -660,6 +693,7 @@ impl App {
                 }
             }
             Event::Error { message, .. } => {
+                self.remember_error(&message);
                 self.notice = Some(message);
                 Task::none()
             }
@@ -713,6 +747,13 @@ impl App {
     pub fn picked(&self) -> Option<&Item> {
         let selected = self.selected.as_ref()?;
         self.items.iter().find(|item| &item.path == selected)
+    }
+
+    fn remember_error(&mut self, message: &str) {
+        if self.errors.len() == 20 {
+            self.errors.pop_front();
+        }
+        self.errors.push_back(message.chars().take(500).collect());
     }
 
     /// The library's name for a file, which for Wallpaper Engine is its title.
