@@ -134,6 +134,7 @@ impl App {
 
     fn step(&mut self, index: usize) {
         let paused = self.is_paused(&self.screens[index].name);
+        let pointer = self.pointer(index);
         let (fps, accent) = (self.effective_fps(), self.accent);
         let screen = &mut self.screens[index];
         let Some(shown) = screen.shown.as_mut() else {
@@ -146,7 +147,7 @@ impl App {
         if let Some(token) = scene.timer.take() {
             self.handle.remove(token);
         }
-        let result = advance(&self.gl, fps, accent, speed, !paused, scene);
+        let result = advance(&self.gl, fps, accent, speed, !paused, pointer, scene);
         if let Err(message) = result {
             let show = shown.show.clone();
             let output = screen.name.clone();
@@ -267,6 +268,7 @@ pub(super) fn advance(
     accent: [f32; 3],
     speed: f32,
     running: bool,
+    pointer: [f32; 2],
     scene: &mut Scene,
 ) -> Result<(), String> {
     let frame = scene.clock.tick(Instant::now(), speed, running, fps);
@@ -284,6 +286,7 @@ pub(super) fn advance(
         }
         SceneShader::Native(renderer, fit) => {
             renderer.set_daytime(daytime());
+            renderer.follow(pointer, frame.delta);
             gl.run_native(renderer, &scene.canvas, *fit, frame.time, frame.delta)?
         }
     }

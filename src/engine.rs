@@ -3,6 +3,7 @@ mod diagnostics;
 mod monitors;
 mod native;
 mod playback;
+mod pointer;
 mod policy;
 mod poster;
 mod presentation;
@@ -324,6 +325,8 @@ struct Screen {
     failed: Option<Show>,
     /// Our surface is unmapped while another program draws this monitor.
     hidden: bool,
+    /// Where the pointer was last over it, -1 to 1 across it with y up.
+    pointer: [f32; 2],
 }
 
 enum Picture {
@@ -741,6 +744,7 @@ impl App {
             stale: false,
             failed: None,
             hidden: false,
+            pointer: [0.0; 2],
         });
         self.screens.len() - 1
     }

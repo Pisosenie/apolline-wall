@@ -88,6 +88,10 @@ impl Window {
         self.size
     }
 
+    pub fn position(&self) -> (i16, i16) {
+        self.position
+    }
+
     pub fn handle(&self) -> RawWindowHandle {
         RawWindowHandle::Xlib(XlibWindowHandle::new(self.id.into()))
     }
@@ -177,6 +181,12 @@ pub(super) fn connect(
 impl X11 {
     pub fn flush(&self) {
         let _ = self.conn.flush();
+    }
+
+    /// Where the pointer is on the root window, when it's on this screen.
+    pub fn pointer(&self) -> Option<(i16, i16)> {
+        let reply = self.conn.query_pointer(self.root).ok()?.reply().ok()?;
+        reply.same_screen.then_some((reply.root_x, reply.root_y))
     }
 
     /// RandR's monitors, or the whole screen as one when RandR can't say.

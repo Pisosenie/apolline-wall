@@ -1,6 +1,6 @@
 //! The Wayland side: a surface per output on wlr-layer-shell's background layer, or on GNOME
 //! a window its Shell extension puts behind everything, with frame callbacks that pace
-//! drawing.
+//! drawing, and where the pointer is over them for scenes that follow it.
 
 mod shell;
 
@@ -16,6 +16,8 @@ use smithay_client_toolkit::reexports::calloop::LoopHandle;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::wl_output::{Transform, WlOutput};
+use smithay_client_toolkit::reexports::client::protocol::wl_pointer::WlPointer;
+use smithay_client_toolkit::reexports::client::protocol::wl_seat::WlSeat;
 use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface;
 use smithay_client_toolkit::reexports::client::{Connection, Dispatch, Proxy, QueueHandle};
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewport::{
@@ -23,13 +25,15 @@ use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_vie
 };
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState, SimpleGlobal};
+use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
+use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{
     LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
 };
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_simple,
-    delegate_xdg_shell, delegate_xdg_window, registry_handlers,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_simple, delegate_xdg_shell, delegate_xdg_window, registry_handlers,
 };
 
 use super::{App, Desktop, Surface};
@@ -41,6 +45,9 @@ pub(super) struct Wayland {
     compositor: CompositorState,
     shells: shell::Shells,
     viewporter: Option<SimpleGlobal<WpViewporter, 1>>,
+    seats: SeatState,
+    /// Each seat's pointer, by the seat it's on.
+    pointers: Vec<(WlSeat, WlPointer)>,
     qh: QueueHandle<App>,
 }
 
@@ -67,6 +74,8 @@ pub(super) fn connect(
             .map_err(|err| format!("wl_compositor: {err}"))?,
         shells,
         viewporter: SimpleGlobal::bind(&globals, &qh).ok(),
+        seats: SeatState::new(&globals, &qh),
+        pointers: Vec::new(),
         qh,
     };
     WaylandSource::new(conn.clone(), queue)
@@ -349,12 +358,88 @@ impl LayerShellHandler for App {
     }
 }
 
+impl SeatHandler for App {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.wayland_mut().seats
+    }
+
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlSeat) {}
+
+    fn new_capability(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: WlSeat,
+        capability: Capability,
+    ) {
+        let wayland = self.wayland_mut();
+        if capability == Capability::Pointer
+            && !wayland.pointers.iter().any(|(on, _)| *on == seat)
+            && let Ok(pointer) = wayland.seats.get_pointer(qh, &seat)
+        {
+            wayland.pointers.push((seat, pointer));
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        seat: WlSeat,
+        capability: Capability,
+    ) {
+        if capability == Capability::Pointer {
+            self.wayland_mut().forget_pointer(&seat);
+        }
+    }
+
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, seat: WlSeat) {
+        self.wayland_mut().forget_pointer(&seat);
+    }
+}
+
+impl Wayland {
+    fn forget_pointer(&mut self, seat: &WlSeat) {
+        self.pointers.retain(|(on, pointer)| {
+            if on == seat && pointer.version() >= 3 {
+                pointer.release();
+            }
+            on != seat
+        });
+    }
+}
+
+impl PointerHandler for App {
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            if !matches!(
+                event.kind,
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. }
+            ) {
+                continue;
+            }
+            let Some(index) = self.screen_of(&event.surface) else {
+                continue;
+            };
+            if let Some(size) = self.output_at(index).and_then(|output| output.logical) {
+                self.pointed(index, event.position, size);
+            }
+        }
+    }
+}
+
 impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.wayland_mut().registry
     }
 
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
 
 impl Dispatch<WpViewport, ()> for App {
@@ -375,4 +460,6 @@ delegate_layer!(App);
 delegate_xdg_shell!(App);
 delegate_xdg_window!(App);
 delegate_registry!(App);
+delegate_seat!(App);
+delegate_pointer!(App);
 delegate_simple!(App, WpViewporter, 1);

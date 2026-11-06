@@ -1,4 +1,5 @@
 //! Preparing scenes happens on the loading thread, before any GL work or desktop changes.
+//! Scenes may follow the pointer: the engine moves it where the desktop says it is.
 
 use std::path::Path;
 
@@ -13,7 +14,7 @@ pub fn load(
     Project::open(folder, assets.as_deref())
         .and_then(|mut project| {
             project.set_properties(values)?;
-            project.prepare()
+            project.prepare_pointed()
         })
         .map_err(|err| format!("{}: {err}", folder.display()))
 }

@@ -21,8 +21,9 @@ impl App {
         let mut renderer = self.gl.compile_native(prepared)?;
         // A still scene keeps the time of day it was drawn at.
         renderer.set_daytime(shading::daytime());
-        // Introspection can find a time declaration whose value the GPU optimizes away.
-        if !renderer.animated() {
+        // Introspection can find a time declaration whose value the GPU optimizes away. A
+        // scene that follows the pointer keeps moving with it.
+        if !renderer.animated() && !renderer.needs().pointer {
             return self
                 .gl
                 .still_scene(renderer, size, fit)
@@ -58,6 +59,7 @@ impl App {
             self.accent,
             1.0,
             true,
+            self.screens[index].pointer,
             &mut scene,
         )
         .and_then(|()| self.gl.scene_poster(&scene.canvas));
