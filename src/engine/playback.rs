@@ -170,8 +170,27 @@ impl App {
         };
         video.waiting = false;
         let first = !std::mem::replace(&mut video.started, true);
-        if first && let Err(message) = video.player.save_frame(&poster_path(source)) {
-            self.happened(source, Happened::Saved(Err(message)));
+        if first {
+            // Read back from our own canvas: mpv's screenshot-to-file fails under its render
+            // API on some drivers (NVIDIA's, for one).
+            let saved = video
+                .canvas
+                .as_ref()
+                .ok_or_else(|| "the video has no canvas".to_owned())
+                .and_then(|canvas| {
+                    // mpv draws into the canvas top row first, the other way from GL.
+                    let row = canvas.size.0 as usize * 4;
+                    let rgba: Vec<u8> = self
+                        .gl
+                        .read(canvas)?
+                        .chunks_exact(row)
+                        .rev()
+                        .flatten()
+                        .copied()
+                        .collect();
+                    crate::picture::save_png(&poster_path(source), &rgba, canvas.size)
+                });
+            self.happened(source, Happened::Saved(saved));
         }
         for index in users {
             let screen = &mut self.screens[index];
