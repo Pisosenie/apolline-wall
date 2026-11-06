@@ -83,7 +83,7 @@ impl App {
         }
         match scene.shader {
             SceneShader::Toy(shader) => self.gl.forget(shader),
-            SceneShader::Native(renderer, _) => self.gl.drop_native(renderer),
+            SceneShader::Native(renderer, _) => self.gl.drop_native(*renderer),
         }
         self.gl.free(scene.canvas);
     }

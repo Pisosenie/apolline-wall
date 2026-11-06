@@ -391,7 +391,7 @@ struct Scene {
 
 enum SceneShader {
     Toy(gl::Shader),
-    Native(apolline_scene::Renderer, protocol::Fit),
+    Native(Box<apolline_scene::Renderer>, protocol::Fit),
 }
 
 impl App {

@@ -49,7 +49,7 @@ impl App {
             })
             .unwrap_or_default();
         let mut scene = Scene {
-            shader: SceneShader::Native(renderer, fit),
+            shader: SceneShader::Native(Box::new(renderer), fit),
             canvas,
             clock,
             timer: None,
