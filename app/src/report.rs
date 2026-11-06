@@ -119,9 +119,9 @@ fn file_facts(path: &Path) -> Vec<String> {
     } else {
         path.parent()
     };
+    // The project is anyone's file: read with the same limits as everywhere else.
     let project = folder.and_then(|folder| {
-        let text = std::fs::read_to_string(folder.join("project.json")).ok()?;
-        serde_json::from_str::<serde_json::Value>(&text).ok()
+        apolline_wall_protocol::source::read_project::<serde_json::Value>(folder).ok()
     });
     if let Some(project) = project {
         let field = |name: &str| {
@@ -160,12 +160,31 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
+/// The home folder as `~` where it is the whole folder, not the start of a longer name:
+/// `/home/dan/x` but not `/home/danny/x`.
+fn without_home(text: &str, home: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(home) {
+        let after = &rest[at + home.len()..];
+        out.push_str(&rest[..at]);
+        let whole = after
+            .chars()
+            .next()
+            .is_none_or(|c| c == '/' || !(c.is_alphanumeric() || c == '_' || c == '-' || c == '.'));
+        out.push_str(if whole { "~" } else { home });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Takes the home folder and the user's name out, the name only where it stands as a word,
 /// so a report can be posted publicly.
 pub fn redact(text: &str, home: &Path, user: &str) -> String {
     let home = home.to_string_lossy();
     let text = if home.len() > 1 {
-        text.replace(home.as_ref(), "~")
+        without_home(text, &home)
     } else {
         text.to_owned()
     };

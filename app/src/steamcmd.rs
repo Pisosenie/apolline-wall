@@ -187,18 +187,22 @@ fn run(
         let mut terminal = File::from(master);
         std::thread::spawn(move || listen(&mut terminal, &heard))
     };
-    let mut cancelled = false;
+    let mut cancelled: Option<Instant> = None;
     let mut measured = Instant::now();
     while !reader.is_finished() {
         match input.try_recv() {
             Ok(Input::Answer(answer)) => {
                 let _ = writer.write_all(format!("{answer}\n").as_bytes());
             }
-            Ok(Input::Cancel) | Err(TryRecvError::Disconnected) if !cancelled => {
-                cancelled = true;
+            Ok(Input::Cancel) | Err(TryRecvError::Disconnected) if cancelled.is_none() => {
+                cancelled = Some(Instant::now());
                 unsafe { libc::kill(-pid, libc::SIGTERM) };
             }
             _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+        // steamcmd can sit on SIGTERM in the middle of a download.
+        if cancelled.is_some_and(|at| at.elapsed() >= Duration::from_secs(5)) {
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
         if let Job::Download(id) = job
             && measured.elapsed() >= Duration::from_secs(1)
@@ -212,7 +216,7 @@ fn run(
         .join()
         .map_err(|_| "steamcmd's output broke".to_owned())?;
     let status = child.wait().map_err(|err| err.to_string())?;
-    if cancelled {
+    if cancelled.is_some() {
         return Err("Stopped.".into());
     }
     let content = root.join("steamapps/workshop/content").join(APP);

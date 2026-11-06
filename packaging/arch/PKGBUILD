@@ -3,7 +3,7 @@ pkgname=apolline-wall-git
 _name=apolline-wall
 pkgver=r0
 pkgrel=1
-pkgdesc='Live wallpapers for Wayland: pictures, videos, shaders and Wallpaper Engine videos, with an app to pick them'
+pkgdesc='Live wallpapers for Wayland and X11: pictures, videos, shaders and Wallpaper Engine scenes, with an app to pick them'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/apolline-wall'
 license=('MIT OR Apache-2.0')
@@ -13,7 +13,7 @@ optdepends=(
   'ffmpeg: video thumbnails in the Wallpapers app'
   'vulkan-icd-loader: faster drawing for the Wallpapers app'
   'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
-  'linux-wallpaperengine-git: Wallpaper Engine scenes and web wallpapers'
+  'linux-wallpaperengine-git: Wallpaper Engine scenes not drawn natively yet, and web wallpapers'
   'steamcmd: Workshop downloads without the Steam client'
   'libx11: X11 sessions, and GNOME without its extension through Xwayland'
 )

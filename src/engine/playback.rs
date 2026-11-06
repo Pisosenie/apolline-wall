@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use smithay_client_toolkit::reexports::calloop::channel;
+
 use super::{App, Picture, Video};
 use crate::picture;
 use crate::protocol::{self, Event, Fit};
@@ -40,7 +42,14 @@ impl App {
     }
 
     fn open_video(&mut self, source: &Path) -> Result<Video, String> {
-        if !source.is_file() {
+        // A Workshop video project plays the file it names.
+        let file = if source.is_dir() {
+            apolline_wall_protocol::source::project_video(source)
+                .ok_or_else(|| format!("{}: no video in the project", source.display()))?
+        } else {
+            source.to_path_buf()
+        };
+        if !file.is_file() {
             return Err(format!("{}: no such file", source.display()));
         }
         let mpv = match &self.mpv {
@@ -49,7 +58,7 @@ impl App {
         };
         self.gl.current()?;
         Ok(Video {
-            player: Player::new(&mpv, source, self.gl.display(), self.platform, &self.wake)?,
+            player: Player::new(&mpv, &file, self.gl.display(), self.platform, &self.wake)?,
             canvas: None,
             size: None,
             started: false,
@@ -176,25 +185,16 @@ impl App {
         if first {
             // Read back from our own canvas: mpv's screenshot-to-file fails under its render
             // API on some drivers (NVIDIA's, for one).
-            let saved = video
+            let read = video
                 .canvas
                 .as_ref()
                 .filter(|canvas| canvas.size.0 > 0 && canvas.size.1 > 0)
                 .ok_or_else(|| "the video has no canvas".to_owned())
-                .and_then(|canvas| {
-                    // mpv draws into the canvas top row first, the other way from GL.
-                    let row = canvas.size.0 as usize * 4;
-                    let rgba: Vec<u8> = self
-                        .gl
-                        .read(canvas)?
-                        .chunks_exact(row)
-                        .rev()
-                        .flatten()
-                        .copied()
-                        .collect();
-                    crate::picture::save_png(&poster_path(source), &rgba, canvas.size)
-                });
-            self.happened(source, Happened::Saved(saved));
+                .and_then(|canvas| Ok((self.gl.read(canvas)?, canvas.size)));
+            match read {
+                Ok((rgba, size)) => self.save_poster(source, rgba, size),
+                Err(message) => self.happened(source, Happened::Saved(Err(message))),
+            }
         }
         for index in users {
             let screen = &mut self.screens[index];
@@ -212,6 +212,40 @@ impl App {
                 self.draw(index);
             }
         }
+    }
+
+    /// Encodes the first frame on a thread of its own: a 4K PNG takes long enough to hold up
+    /// every monitor and the socket.
+    fn save_poster(&mut self, source: &Path, rgba: Vec<u8>, size: (u32, u32)) {
+        let (sender, saved) = channel::channel();
+        let video = source.to_path_buf();
+        let token = std::rc::Rc::new(std::cell::Cell::new(None));
+        let own = token.clone();
+        let watched = self
+            .handle
+            .insert_source(saved, move |event, _, app: &mut App| {
+                if let channel::Event::Msg(result) = event {
+                    app.happened(&video, Happened::Saved(result));
+                }
+                // One message, then the channel goes.
+                if let Some(token) = own.take() {
+                    app.handle.remove(token);
+                }
+            });
+        match watched {
+            Ok(watched) => token.set(Some(watched)),
+            Err(err) => {
+                self.happened(source, Happened::Saved(Err(err.to_string())));
+                return;
+            }
+        }
+        let path = poster_path(source);
+        std::thread::spawn(move || {
+            // mpv draws into the canvas top row first, the other way from GL.
+            let row = size.0 as usize * 4;
+            let rgba: Vec<u8> = rgba.chunks_exact(row).rev().flatten().copied().collect();
+            let _ = sender.send(crate::picture::save_png(&path, &rgba, size));
+        });
     }
 
     pub(super) fn fit_canvases(&mut self) {

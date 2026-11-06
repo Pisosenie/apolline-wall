@@ -167,7 +167,8 @@ impl App {
                 return;
             }
         }
-        self.step_shared(key);
+        // A new canvas starts empty: it is drawn now, even for a scene the pointer hasn't moved.
+        self.draw_shared(key, true);
     }
 
     pub(super) fn close_unused_scenes(&mut self) {
@@ -214,6 +215,10 @@ impl App {
     }
 
     pub(super) fn step_shared(&mut self, key: &SceneKey) {
+        self.draw_shared(key, false);
+    }
+
+    fn draw_shared(&mut self, key: &SceneKey, force: bool) {
         let users = self.scene_users(key);
         if users.is_empty() {
             return;
@@ -254,7 +259,7 @@ impl App {
             let moved = renderer.follow(pointer, seconds);
             // A scene that only follows the pointer draws when it moves, and otherwise looks
             // again a frame later without drawing.
-            if !moved && !renderer.animated() && !paused {
+            if !moved && !renderer.animated() && !paused && !force {
                 let wait = std::time::Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
                 scene.timer = due_after(&self.handle, key, id, wait);
                 return;

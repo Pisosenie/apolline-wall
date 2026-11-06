@@ -360,7 +360,17 @@ fn frame(path: &Path, cache: &Path) -> bool {
             return false;
         }
         Command::new("ffmpeg")
-            .args(["-loglevel", "error", "-y", "-ss", at, "-threads", "1", "-i"])
+            // A Workshop "video" can be a playlist pointing anywhere: local files only.
+            .args([
+                "-loglevel",
+                "error",
+                "-y",
+                "-protocol_whitelist",
+                "file",
+                "-ss",
+                at,
+            ])
+            .args(["-threads", "1", "-i"])
             .arg(path)
             .args([
                 "-frames:v",

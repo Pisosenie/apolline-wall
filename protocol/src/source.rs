@@ -15,17 +15,36 @@ pub enum Kind {
     Picture,
     Video,
     Shader,
-    /// A Wallpaper Engine project folder, drawn by linux-wallpaperengine.
+    /// A Wallpaper Engine scene or web project folder.
     Scene,
 }
 
-/// What a source would be shown as: a folder is a Wallpaper Engine project, and any file
-/// it doesn't recognize is tried as a picture.
+/// What a source would be shown as: a folder is a Wallpaper Engine project, a video one
+/// played as its video, and any file it doesn't recognize is tried as a picture.
 pub fn kind(path: &Path) -> Kind {
     if path.is_dir() {
-        return Kind::Scene;
+        return match project_video(path) {
+            Some(_) => Kind::Video,
+            None => Kind::Scene,
+        };
     }
     known(path).unwrap_or(Kind::Picture)
+}
+
+/// The file a Wallpaper Engine video project plays, when the folder is one.
+pub fn project_video(folder: &Path) -> Option<PathBuf> {
+    #[derive(serde::Deserialize)]
+    struct Project {
+        #[serde(rename = "type", default)]
+        kind: String,
+        #[serde(default)]
+        file: String,
+    }
+    let project: Project = read_project(folder).ok()?;
+    if !project.kind.eq_ignore_ascii_case("video") {
+        return None;
+    }
+    project_file(folder, &project.file).filter(|file| known(file) == Some(Kind::Video))
 }
 
 /// Only the files a library should list.
@@ -145,6 +164,36 @@ mod tests {
         std::fs::create_dir(&metadata).unwrap();
         assert!(read_project::<serde_json::Value>(&folder).is_err());
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn a_video_project_folder_plays_its_video_and_a_scene_folder_stays_a_scene() {
+        let dir = std::env::temp_dir().join(format!("wall-video-project-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("clip.mp4"), b"").unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"type":"Video","file":"clip.mp4"}"#,
+        )
+        .unwrap();
+        assert_eq!(kind(&dir), Kind::Video);
+        assert_eq!(
+            project_video(&dir),
+            Some(dir.join("clip.mp4").canonicalize().unwrap())
+        );
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"type":"video","file":"../etc/passwd"}"#,
+        )
+        .unwrap();
+        assert_eq!(kind(&dir), Kind::Scene);
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"type":"scene","file":"scene.json"}"#,
+        )
+        .unwrap();
+        assert_eq!(kind(&dir), Kind::Scene);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
