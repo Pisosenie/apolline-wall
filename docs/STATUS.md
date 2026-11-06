@@ -12,11 +12,25 @@ thread). If preparation fails, the scene goes to `linux-wallpaperengine`.
 `APOLLINE_WALL_SCENES=external` sends every scene there. Of the 81 scenes in the local Workshop
 set, 55 are drawn natively.
 
+## On the Linux machine (2026-11-06)
+
+Arch, niri, NVIDIA RTX 4070 Ti, two monitors. fmt, clippy and the 123 tests pass on x86_64.
+
+- Native scenes run in the daemon on both monitors through niri's DRM backend, the turned one
+  too. A particle-heavy scene costs about 31 % of a core on two screens at 30 fps; paused, nothing.
+- Apolline runs it as its child now (Apolline `4ec9374`): a video, shader or project folder as
+  `[desktop] wallpaper` starts it, a picture stops it, and its poster stands in when it can't run.
+- Fixed: a Workshop "video" that was really a playlist or EDL had mpv fetch a URL (checked with
+  a local HTTP server) or open other files. mpv now reads through ffmpeg only, local files only.
+- Fixed: video posters failed on NVIDIA (`screenshot-to-file` under the render API) and the
+  error path handed the video file itself out as the poster. They're read back from the canvas.
+- `status` says `battery_available: true` on a desktop: it means UPower answers, not that there
+  is a battery. Fine, if a confusing name.
+
 ## Never run on real hardware
 
 All of these were only type-checked for Linux from the Mac (see below):
 
-- the native renderer inside the daemon on a Linux GPU (EGL, GLES);
 - GNOME through the extension in `gnome/`, and X11 sessions;
 - real `steamcmd` downloads;
 - `linux-wallpaperengine` as the fallback.
