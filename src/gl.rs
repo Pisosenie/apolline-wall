@@ -138,6 +138,13 @@ impl Layer {
         }
     }
 
+    /// The same layer for a texture GL drew into, bottom row first.
+    pub fn rendered(mut self) -> Self {
+        self.uv = picture::from_gl(self.uv);
+        self.back = picture::from_gl(self.back);
+        self
+    }
+
     /// A `source`-sized picture fitted to a `target`-sized screen.
     pub fn fitted(
         texture: Texture,

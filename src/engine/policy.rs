@@ -50,6 +50,7 @@ impl App {
                 self.draw(index);
             }
         }
+        self.fit_scenes();
         self.pause_scenes();
         self.schedule_rotations();
     }

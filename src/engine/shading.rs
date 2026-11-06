@@ -229,6 +229,7 @@ impl App {
                 self.step(index);
             }
         }
+        self.pause_shared();
     }
 
     pub(super) fn limit(&mut self, limits: Limits) {
@@ -241,6 +242,7 @@ impl App {
             for index in 0..self.screens.len() {
                 self.rescale_scene(index);
             }
+            self.fit_scenes();
         }
         if changed_fps {
             self.pause_scenes();

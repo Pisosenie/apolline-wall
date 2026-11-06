@@ -25,6 +25,20 @@ impl App {
                 .upload(&pixels)
                 .map(|texture| (Picture::Still(texture), loading.show.source.clone())),
             Ok(Content::Scene(scene)) => {
+                let key = super::shared::key(&loading.show);
+                // Another monitor already runs this scene: this one shows its part too.
+                if let Some(shared) = self.scenes.get(&key) {
+                    drop(scene);
+                    let pixels = self.gl.scene_poster(&shared.scene.canvas);
+                    let generation = loading.generation;
+                    let source = loading.show.source.clone();
+                    let output = self.screens[index].name.clone();
+                    self.present(index, Picture::Scene(key.clone()), loading);
+                    self.fit_scene(&key);
+                    self.queue_poster(output, source, generation, pixels);
+                    protocol::emit(&self.status());
+                    return;
+                }
                 let native = self.native_scene(index, &scene, &loading);
                 drop(scene);
                 give_back_memory();
@@ -32,12 +46,16 @@ impl App {
                     Ok(native) => {
                         let (picture, pixels) = match native {
                             Native::Still(texture, pixels) => (Picture::Native(texture), pixels),
-                            Native::Moving(scene, pixels) => (Picture::Shader(scene), pixels),
+                            Native::Moving(scene, pixels) => {
+                                self.share_scene(key.clone(), *scene);
+                                (Picture::Scene(key.clone()), pixels)
+                            }
                         };
                         let generation = loading.generation;
                         let source = loading.show.source.clone();
                         let output = self.screens[index].name.clone();
                         self.present(index, picture, loading);
+                        self.fit_scene(&key);
                         self.queue_poster(output, source, generation, Ok(pixels));
                         protocol::emit(&self.status());
                         return;
@@ -126,6 +144,7 @@ impl App {
         }
         self.draw(index);
         self.close_unused_videos();
+        self.close_unused_scenes();
         self.sync_pauses();
     }
 
@@ -149,6 +168,7 @@ impl App {
                 self.drop_scene(*scene);
                 Some(gl::Layer::new(texture?, UPSIDE_DOWN, old.show.look))
             }
+            Picture::Scene(key) => self.scene_snapshot(index, &key, &old.show),
             Picture::External(external) => {
                 scenery::stop(&external);
                 None
@@ -180,6 +200,12 @@ impl App {
             Picture::Shader(scene) => {
                 gl::Layer::new(scene.canvas.texture, UPSIDE_DOWN, shown.show.look)
             }
+            Picture::Scene(key) => {
+                let Some(layer) = self.scene_layer(index, key) else {
+                    return;
+                };
+                layer
+            }
             Picture::External(_) => return,
         };
         let progress = match &screen.fade {
@@ -189,7 +215,10 @@ impl App {
             _ => 1.0,
         };
         let fading = progress < 1.0;
-        let playing = matches!(shown.picture, Picture::Video(_) | Picture::Shader(_)) && !paused;
+        let playing = matches!(
+            shown.picture,
+            Picture::Video(_) | Picture::Shader(_) | Picture::Scene(_)
+        ) && !paused;
         let before = screen
             .fade
             .as_ref()
@@ -231,6 +260,12 @@ impl App {
         );
         if shader && !self.is_paused(&self.screens[index].name) {
             self.tick_scene(index);
+        }
+        if let Some(Picture::Scene(key)) = self.screens[index].shown.as_ref().map(|s| &s.picture)
+            && !self.is_paused(&self.screens[index].name)
+        {
+            let key = key.clone();
+            self.tick_shared(&key);
         }
         let screen = &self.screens[index];
         if !screen.frame_pending && (screen.fade.is_some() || screen.stale) {

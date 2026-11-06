@@ -12,6 +12,7 @@ impl App {
             return;
         }
         self.screens[index].pointer = [across(at.0, size.0), -across(at.1, size.1)];
+        self.pointed_last = Some(self.screens[index].id);
     }
 
     /// Where the pointer is over screen `index` now, -1 to 1 across it with y up.
@@ -37,6 +38,15 @@ impl App {
     }
 }
 
+/// The pointer over a screen, -1 to 1 with y up, over the picture placed on it by `uv`.
+pub(super) fn through([x, y, dx, dy]: crate::picture::Uv, [px, py]: [f32; 2]) -> [f32; 2] {
+    let (u, v) = ((px + 1.0) / 2.0 * x + dx, (1.0 - py) / 2.0 * y + dy);
+    [
+        (u * 2.0 - 1.0).clamp(-1.0, 1.0),
+        (1.0 - v * 2.0).clamp(-1.0, 1.0),
+    ]
+}
+
 /// A place along a side `side` pixels long, as -1 to 1.
 fn across(at: f64, side: u32) -> f32 {
     ((at / f64::from(side)).clamp(0.0, 1.0) * 2.0 - 1.0) as f32
@@ -44,7 +54,7 @@ fn across(at: f64, side: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::across;
+    use super::{across, through};
 
     #[test]
     fn the_pointer_runs_minus_one_to_one_with_y_up() {
@@ -53,5 +63,17 @@ mod tests {
             (-1.0, 0.0, 1.0)
         );
         assert_eq!(across(-5.0, 100), -1.0);
+    }
+
+    #[test]
+    fn a_portrait_screen_points_into_the_middle_of_a_wide_scene() {
+        // Covered by a 16:9 scene, a 9:16 screen shows its middle 81/256.
+        let uv = crate::picture::placement(crate::protocol::Fit::Cover, (1920, 1080), (1080, 1920));
+        let [x, y] = through(uv, [1.0, 1.0]);
+        assert!(
+            (x - 81.0 / 256.0).abs() < 1e-3 && (y - 1.0).abs() < 1e-6,
+            "{x} {y}"
+        );
+        assert_eq!(through(crate::picture::WHOLE, [0.5, -0.25]), [0.5, -0.25]);
     }
 }

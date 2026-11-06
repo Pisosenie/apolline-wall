@@ -1,6 +1,7 @@
 use apolline_scene::Prepared;
 
 use super::{App, Loading, Picture, Scene, SceneShader, shading};
+use crate::protocol::Fit;
 use crate::{gl, picture};
 
 pub(super) enum Native {
@@ -30,7 +31,13 @@ impl App {
                 .still_scene(renderer, size, fit)
                 .map(|(texture, pixels)| Native::Still(texture, pixels));
         }
-        let canvas = match self.gl.canvas(self.shader_size(size)) {
+        // Drawn at its own aspect: the monitors showing it each take their part.
+        let budget = {
+            let (w, h) = self.shader_size(size);
+            f64::from(w) * f64::from(h)
+        };
+        let canvas_size = picture::shared_canvas(renderer.size(), [(fit, size)], budget);
+        let canvas = match self.gl.canvas(canvas_size) {
             Ok(canvas) => canvas,
             Err(error) => {
                 self.gl.drop_native(renderer);
@@ -42,14 +49,12 @@ impl App {
             .as_ref()
             .filter(|shown| shown.show.source == loading.show.source)
             .and_then(|shown| match &shown.picture {
-                Picture::Shader(scene) if matches!(scene.shader, SceneShader::Native(_, _)) => {
-                    Some(scene.clock.fork())
-                }
+                Picture::Scene(key) => self.scenes.get(key).map(|shared| shared.scene.clock.fork()),
                 _ => None,
             })
             .unwrap_or_default();
         let mut scene = Scene {
-            shader: SceneShader::Native(Box::new(renderer), fit),
+            shader: SceneShader::Native(Box::new(renderer), Fit::Cover),
             canvas,
             clock,
             timer: None,

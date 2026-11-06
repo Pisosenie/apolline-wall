@@ -242,6 +242,38 @@ pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
     [x, y, (1.0 - x) / 2.0, (1.0 - y) / 2.0]
 }
 
+/// The canvas for a scene several monitors show: the scene's own aspect, as big as the most
+/// demanding monitor needs, within the `budget` pixels separate canvases would have taken.
+pub fn shared_canvas(
+    (sw, sh): (f32, f32),
+    targets: impl IntoIterator<Item = (Fit, (u32, u32))>,
+    budget: f64,
+) -> (u32, u32) {
+    let (sw, sh) = (f64::from(sw.max(1.0)), f64::from(sh.max(1.0)));
+    let needed = targets
+        .into_iter()
+        .map(|(fit, (w, h))| {
+            let (x, y) = (f64::from(w) / sw, f64::from(h) / sh);
+            match fit {
+                Fit::Cover => x.max(y),
+                Fit::Contain | Fit::Blur => x.min(y),
+            }
+        })
+        .fold(0.0, f64::max);
+    let mut scale = if needed > 0.0 { needed } else { 1.0 };
+    let pixels = sw * sh * scale * scale;
+    if budget > 0.0 && pixels > budget {
+        scale *= (budget / pixels).sqrt();
+    }
+    let side = |n: f64| ((n * scale).round() as u32).clamp(1, 16384);
+    (side(sw), side(sh))
+}
+
+/// A placement for what GL drew, bottom row first.
+pub fn from_gl([x, y, dx, dy]: Uv) -> Uv {
+    [x, -y, dx, 1.0 - dy]
+}
+
 pub fn canvas_size(
     (vw, vh): (u32, u32),
     targets: impl IntoIterator<Item = (Fit, (u32, u32))>,
@@ -264,6 +296,32 @@ pub fn canvas_size(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shared_scene_canvas_covers_both_monitors_within_their_pixels() {
+        let landscape = (Fit::Cover, (1920, 1080));
+        let portrait = (Fit::Cover, (1080, 1920));
+        // One monitor alone gets the scene at its own size.
+        assert_eq!(
+            shared_canvas((1920.0, 1080.0), [landscape], 1920.0 * 1080.0),
+            (1920, 1080)
+        );
+        // A portrait one needs a wider canvas than either, held to what both would have cost.
+        let (w, h) = shared_canvas(
+            (1920.0, 1080.0),
+            [landscape, portrait],
+            2.0 * 1920.0 * 1080.0,
+        );
+        assert!(
+            (w as f64 * h as f64) <= 2.0 * 1920.0 * 1080.0 + 4000.0,
+            "{w}x{h}"
+        );
+        assert!(
+            w > 1920 && (w as f32 / h as f32 - 16.0 / 9.0).abs() < 0.01,
+            "{w}x{h}"
+        );
+        assert_eq!(from_gl(WHOLE), UPSIDE_DOWN);
+    }
 
     #[test]
     fn a_saved_png_reads_back_the_same() {

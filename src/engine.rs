@@ -12,6 +12,7 @@ mod rotation;
 mod scenery;
 mod selection;
 mod shading;
+mod shared;
 mod socket;
 mod system;
 mod wayland;
@@ -144,6 +145,8 @@ pub fn run(mode: Mode) -> Result<(), String> {
     let mut app = App {
         screens: Vec::new(),
         videos: HashMap::new(),
+        scenes: HashMap::new(),
+        pointed_last: None,
         gl: Gl::new(display)?,
         desktop,
         platform,
@@ -277,6 +280,10 @@ fn read_commands(commands: Sender<Result<Command, String>>) {
 struct App {
     screens: Vec<Screen>,
     videos: HashMap<PathBuf, Video>,
+    /// Moving native scenes, each drawn once for all the monitors showing it.
+    scenes: HashMap<shared::SceneKey, shared::Shared>,
+    /// The monitor the pointer was last seen over.
+    pointed_last: Option<u64>,
     gl: Gl,
     desktop: Desktop,
     /// What libmpv is told about the display, for hardware decoding.
@@ -334,6 +341,8 @@ enum Picture {
     Native(Texture),
     Video(PathBuf),
     Shader(Box<Scene>),
+    /// A moving native scene, shared with every monitor showing it.
+    Scene(shared::SceneKey),
     External(scenery::External),
 }
 
@@ -343,7 +352,8 @@ impl Picture {
     }
 
     fn native_animated(&self) -> bool {
-        matches!(self, Self::Shader(scene) if matches!(scene.shader, SceneShader::Native(_, _)))
+        matches!(self, Self::Scene(_))
+            || matches!(self, Self::Shader(scene) if matches!(scene.shader, SceneShader::Native(_, _)))
     }
 }
 
@@ -583,7 +593,7 @@ impl App {
                     && (kind == Kind::Video
                         || matches!(
                             screen.shown.as_ref().map(|s| &s.picture),
-                            Some(Picture::External(_))
+                            Some(Picture::External(_) | Picture::Scene(_))
                         )
                         || latest_size == size)
             }) {
@@ -636,6 +646,7 @@ impl App {
         }
         self.close_unused_videos();
         self.fit_canvases();
+        self.fit_scenes();
         self.schedule_rotations();
     }
 
@@ -785,7 +796,7 @@ impl App {
         drop(screen.target.take());
         let still = screen.shown.and_then(|shown| match shown.picture {
             Picture::Still(texture) | Picture::Native(texture) => Some(texture),
-            Picture::Video(_) => None,
+            Picture::Video(_) | Picture::Scene(_) => None,
             Picture::Shader(scene) => {
                 self.drop_scene(*scene);
                 None
@@ -806,6 +817,8 @@ impl App {
             Surface::X11(window) => self.x11_close(window),
         }
         self.close_unused_videos();
+        self.close_unused_scenes();
+        self.fit_scenes();
         self.schedule_rotations();
     }
 }
