@@ -28,13 +28,11 @@ pub enum Platform {
 const UPDATE_FRAME: u64 = 1;
 const EVENT_NONE: c_int = 0;
 const EVENT_SHUTDOWN: c_int = 1;
-const EVENT_COMMAND_REPLY: c_int = 5;
 const EVENT_END_FILE: c_int = 7;
 const EVENT_VIDEO_RECONFIG: c_int = 17;
 const END_FILE_ERROR: c_int = 4;
 const FORMAT_INT64: c_int = 4;
 const GL_RGBA8: c_int = 0x8058;
-const SAVE_FRAME: u64 = 1;
 
 enum Handle {}
 enum RenderContext {}
@@ -84,7 +82,6 @@ pub struct Mpv {
     set_property_string: unsafe extern "C" fn(*mut Handle, *const c_char, *const c_char) -> c_int,
     get_property: unsafe extern "C" fn(*mut Handle, *const c_char, c_int, *mut c_void) -> c_int,
     command: unsafe extern "C" fn(*mut Handle, *mut *const c_char) -> c_int,
-    command_async: unsafe extern "C" fn(*mut Handle, u64, *mut *const c_char) -> c_int,
     wait_event: unsafe extern "C" fn(*mut Handle, f64) -> *mut Event,
     set_wakeup_callback: unsafe extern "C" fn(*mut Handle, Callback, *mut c_void),
     error_string: unsafe extern "C" fn(c_int) -> *const c_char,
@@ -113,7 +110,6 @@ impl Mpv {
                 set_property_string: symbol(&library, "mpv_set_property_string")?,
                 get_property: symbol(&library, "mpv_get_property")?,
                 command: symbol(&library, "mpv_command")?,
-                command_async: symbol(&library, "mpv_command_async")?,
                 wait_event: symbol(&library, "mpv_wait_event")?,
                 set_wakeup_callback: symbol(&library, "mpv_set_wakeup_callback")?,
                 error_string: symbol(&library, "mpv_error_string")?,
@@ -191,6 +187,13 @@ impl Player {
             ("load-scripts", "no"),
             ("ytdl", "no"),
             ("terminal", "no"),
+            // A Workshop "video" is anyone's file: one that is really a playlist, an EDL or an
+            // MP4 pointing elsewhere would have mpv fetch URLs or open other files. Only
+            // ffmpeg's demuxers, reading only local files, and no references out.
+            ("demuxer", "lavf"),
+            ("demuxer-lavf-o", "protocol_whitelist=file"),
+            ("access-references", "no"),
+            ("load-unsafe-playlists", "no"),
         ] {
             player.check(unsafe {
                 (mpv.set_option_string)(handle, c(name).as_ptr(), c(value).as_ptr())
@@ -262,13 +265,6 @@ impl Player {
         self.check(unsafe { (self.mpv.render_render)(self.render, params.as_mut_ptr()) })
     }
 
-    pub fn save_frame(&self, path: &Path) -> Result<(), String> {
-        let path = CString::new(path.as_os_str().as_bytes()).map_err(|err| err.to_string())?;
-        let (command, flags) = (c("screenshot-to-file"), c("video"));
-        let mut args = [command.as_ptr(), path.as_ptr(), flags.as_ptr(), ptr::null()];
-        self.check(unsafe { (self.mpv.command_async)(self.handle, SAVE_FRAME, args.as_mut_ptr()) })
-    }
-
     pub fn happenings(&self) -> Vec<Happened> {
         let mut happened = Vec::new();
         loop {
@@ -279,13 +275,6 @@ impl Player {
                     if let Some(size) = self.size() {
                         happened.push(Happened::Size(size.0, size.1));
                     }
-                }
-                EVENT_COMMAND_REPLY if event.reply_userdata == SAVE_FRAME => {
-                    happened.push(Happened::Saved(if event.error < 0 {
-                        Err(self.mpv.error(event.error))
-                    } else {
-                        Ok(())
-                    }));
                 }
                 EVENT_END_FILE => {
                     let end = unsafe { &*(event.data as *const EndFile) };
