@@ -10,7 +10,7 @@ impl Gl {
         self.current()?;
         let mut renderer = unsafe { Renderer::new(&self.gl, &scene.scene, &scene.layers) }
             .map_err(|err| err.to_string())?;
-        // Each screen runs the scene's scripts on its own.
+        // Each screen runs the scene's scripts and timelines on its own.
         match scene.stage() {
             Ok(stage) => {
                 if let Some(stage) = stage {
@@ -29,7 +29,7 @@ impl Gl {
         unsafe { renderer.delete(&self.gl) };
     }
 
-    /// Runs a frame of the scene's scripts, then draws it.
+    /// Runs a frame of the scene's scripts and timelines, then draws it.
     pub fn run_native(
         &self,
         renderer: &mut Renderer,
