@@ -29,15 +29,17 @@ impl Gl {
         unsafe { renderer.delete(&self.gl) };
     }
 
+    /// Runs a frame of the scene's scripts, then draws it.
     pub fn run_native(
         &self,
-        renderer: &Renderer,
+        renderer: &mut Renderer,
         canvas: &Canvas,
         fit: Fit,
         time: f32,
         delta: f32,
     ) -> Result<(), String> {
         self.current()?;
+        unsafe { renderer.animate(&self.gl, time, delta) };
         let fit = match fit {
             Fit::Cover => render::Fit::Cover,
             // Scenes have no blur yet: whole, with plain edges.
