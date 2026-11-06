@@ -22,7 +22,7 @@ provides=("$_name")
 conflicts=("$_name")
 # ring's and QuickJS's C parts come out of gcc as LTO objects, which rust's linker (lld) can't read.
 options=('!lto')
-source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=7e31ebf42d8f1fa3dcd14a586e40606cfb477519")
+source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=6a53ddbfe313944efb70bf39b157d4690125a399")
 sha256sums=('SKIP' 'SKIP')
 
 pkgver() {
