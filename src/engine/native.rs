@@ -19,6 +19,7 @@ impl App {
         let fit = loading.show.fit;
         picture::pixel_bytes(size.0, size.1)?;
         let mut renderer = self.gl.compile_native(prepared)?;
+        renderer.follow(self.screens[index].pointer, 0.0);
         // A still scene keeps the time of day it was drawn at.
         renderer.set_daytime(shading::daytime());
         // Introspection can find a time declaration whose value the GPU optimizes away. A
@@ -52,6 +53,7 @@ impl App {
             canvas,
             clock,
             timer: None,
+            followed: None,
         };
         let result = shading::advance(
             &self.gl,
@@ -59,7 +61,6 @@ impl App {
             self.accent,
             1.0,
             true,
-            self.screens[index].pointer,
             &mut scene,
         )
         .and_then(|()| self.gl.scene_poster(&scene.canvas));

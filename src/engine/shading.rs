@@ -61,6 +61,7 @@ impl App {
             canvas,
             clock: crate::animation::Clock::default(),
             timer: None,
+            followed: None,
         };
         if let Err(message) = advance(
             &self.gl,
@@ -134,7 +135,17 @@ impl App {
 
     fn step(&mut self, index: usize) {
         let paused = self.is_paused(&self.screens[index].name);
-        let pointer = self.pointer(index);
+        let follows = matches!(
+            self.screens[index].shown.as_ref().map(|shown| &shown.picture),
+            Some(Picture::Shader(scene))
+                if matches!(&scene.shader, SceneShader::Native(renderer, _) if renderer.needs().pointer)
+        );
+        // Only a scene that follows the pointer asks where it is: on X11 that's a round trip.
+        let pointer = if follows {
+            self.pointer(index)
+        } else {
+            self.screens[index].pointer
+        };
         let (fps, accent) = (self.effective_fps(), self.accent);
         let screen = &mut self.screens[index];
         let Some(shown) = screen.shown.as_mut() else {
@@ -147,7 +158,32 @@ impl App {
         if let Some(token) = scene.timer.take() {
             self.handle.remove(token);
         }
-        let result = advance(&self.gl, fps, accent, speed, !paused, pointer, scene);
+        if let SceneShader::Native(renderer, _) = &mut scene.shader
+            && renderer.needs().pointer
+        {
+            let now = Instant::now();
+            let seconds = scene
+                .followed
+                .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
+            scene.followed = Some(now);
+            let moved = renderer.follow(pointer, seconds);
+            // A scene that only follows the pointer draws when it moves, and otherwise looks
+            // again a frame later without drawing.
+            if !moved && !renderer.animated() && !paused {
+                let id = screen.id;
+                let generation = shown.generation;
+                let wait = std::time::Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
+                scene.timer = self
+                    .handle
+                    .insert_source(Timer::from_duration(wait), move |_, _, app: &mut App| {
+                        app.scene_due(id, generation);
+                        TimeoutAction::Drop
+                    })
+                    .ok();
+                return;
+            }
+        }
+        let result = advance(&self.gl, fps, accent, speed, !paused, scene);
         if let Err(message) = result {
             let show = shown.show.clone();
             let output = screen.name.clone();
@@ -268,7 +304,6 @@ pub(super) fn advance(
     accent: [f32; 3],
     speed: f32,
     running: bool,
-    pointer: [f32; 2],
     scene: &mut Scene,
 ) -> Result<(), String> {
     let frame = scene.clock.tick(Instant::now(), speed, running, fps);
@@ -286,7 +321,6 @@ pub(super) fn advance(
         }
         SceneShader::Native(renderer, fit) => {
             renderer.set_daytime(daytime());
-            renderer.follow(pointer, frame.delta);
             gl.run_native(renderer, &scene.canvas, *fit, frame.time, frame.delta)?
         }
     }

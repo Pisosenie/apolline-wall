@@ -385,6 +385,8 @@ struct Scene {
     canvas: Canvas,
     clock: crate::animation::Clock,
     timer: Option<smithay_client_toolkit::reexports::calloop::RegistrationToken>,
+    /// When a native scene last followed the pointer, which eases its parallax in real time.
+    followed: Option<std::time::Instant>,
 }
 
 enum SceneShader {
