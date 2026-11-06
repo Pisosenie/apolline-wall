@@ -19,7 +19,8 @@ usage:
   apolline-wall session locked|unlocked       report shell lock state
   apolline-wall status
 
-PATH is a picture, a video (mp4, webm, mkv, mov, gif, ...) or a Shadertoy shader (.frag, .glsl).
+PATH is a picture, a video (mp4, webm, mkv, mov, gif, ...), a Shadertoy shader (.frag, .glsl)
+or a Wallpaper Engine project folder.
 Without arguments it reads JSON commands on stdin, which is how Apolline runs it.";
 
 const WAIT: Duration = Duration::from_secs(20);
