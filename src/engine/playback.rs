@@ -111,11 +111,14 @@ impl App {
             Happened::Saved(result) => {
                 let poster = match result {
                     Ok(()) => poster_path(source),
+                    // Only a warning: the video plays on. Without its source the error doesn't
+                    // read as the wallpaper failing, and the poster stays the video itself,
+                    // which a host can tell from a picture.
                     Err(message) => {
                         protocol::emit(&Event::Error {
                             output: None,
-                            source: Some(source.to_path_buf()),
-                            message: format!("poster frame: {message}"),
+                            source: None,
+                            message: format!("{}: poster frame: {message}", source.display()),
                         });
                         source.to_path_buf()
                     }
@@ -176,6 +179,7 @@ impl App {
             let saved = video
                 .canvas
                 .as_ref()
+                .filter(|canvas| canvas.size.0 > 0 && canvas.size.1 > 0)
                 .ok_or_else(|| "the video has no canvas".to_owned())
                 .and_then(|canvas| {
                     // mpv draws into the canvas top row first, the other way from GL.
