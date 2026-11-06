@@ -20,7 +20,7 @@ optdepends=(
 makedepends=('cargo' 'git')
 provides=("$_name")
 conflicts=("$_name")
-source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=9c975725add631476711f6fdacb86e47c5e89a81")
+source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=cfc761988ee4ad81ab90fba7db58fbee220cea3d")
 sha256sums=('SKIP' 'SKIP')
 
 pkgver() {
