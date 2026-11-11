@@ -1,4 +1,3 @@
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -226,19 +225,7 @@ fn spawn(output: &str, show: &Show, fps: u32, ended: Sender<Ended>) -> Result<Pr
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    // It goes when we go, however we go.
-    let parent = std::process::id() as libc::pid_t;
-    unsafe {
-        command.pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::getppid() != parent {
-                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
-            }
-            Ok(())
-        });
-    }
+    super::process::dies_with_us(&mut command);
     let mut child = command.spawn().map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => format!(
             "Wallpaper Engine scenes need {RENDERER}: {}",

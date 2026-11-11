@@ -72,7 +72,7 @@ The goal: live wallpapers on Linux that feel as finished as [WallpaperMachine](h
 - The AUR first. A `.deb` for Debian 12 and Ubuntu 22.04 on, x86_64 and arm64, is built and tested on Ubuntu by `.github/workflows/packages.yml` and attached to each `v*` release. Then Fedora COPR, and a Flatpak if the sandbox allows layer-shell.
 
 ### Later
-- Shaders and scenes that react to audio: a PipeWire capture into an FFT texture.
+- Scenes that react to audio: written (`parec` into a 64-band spectrum), not yet run on hardware. Shadertoy shaders don't hear it yet.
 
 ## Borrowed from WallpaperMachine
 

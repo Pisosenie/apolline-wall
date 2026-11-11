@@ -46,7 +46,7 @@ Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
 Installed-Size: $(du -ks "$pkg/usr" | cut -f1)
 Depends: libc6 (>= 2.35), libgcc-s1, libwayland-client0, libegl1, libxkbcommon0
 Recommends: libmpv2 | libmpv1, ffmpeg, libvulkan1
-Suggests: libx11-6, libx11-xcb1, libxcb1, steamcmd
+Suggests: libx11-6, libx11-xcb1, libxcb1, steamcmd, pulseaudio-utils
 Section: x11
 Priority: optional
 Homepage: https://github.com/Pisosenie/apolline-wall

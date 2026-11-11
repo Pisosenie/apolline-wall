@@ -316,6 +316,7 @@ impl App {
                 video.paused = paused;
             }
         }
+        self.sync_audio();
     }
 
     fn fail(&mut self, source: &Path, message: String) {

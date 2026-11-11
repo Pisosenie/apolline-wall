@@ -1,6 +1,7 @@
 # Testing the review fixes
 
-Branch `fix/review-findings`, commit `4e6cc5d`, on top of v0.1.0 (`b9730e5`). It stays off
+Branch `fix/review-findings`, on top of v0.1.0 (`b9730e5`): the review fixes (`4e6cc5d`), then
+audio for scenes. It stays off
 `main` until it has run on the Linux machine. It builds with apolline-scene's
 `fix/review-findings`, whose own
 [docs/TESTING.md](https://github.com/Pisosenie/apolline-scene/blob/fix/review-findings/docs/TESTING.md)
@@ -27,7 +28,7 @@ systemctl --user stop apolline-wall
 To test the package instead:
 - Edit `packaging/arch/PKGBUILD` locally: the first source must be
   `$_name::git+$url.git#branch=fix/review-findings`, otherwise makepkg builds `main`.
-- The apolline-scene source is already pinned at the branch's `253cbf1`.
+- The apolline-scene source is already pinned at the tip of its branch.
 - Don't commit that edit.
 
 ## What changed, and how to see each
@@ -90,6 +91,26 @@ To test the package instead:
 7. **A test no longer fails when the temp folder goes through a symlink.**
    - **Check:** `cargo test -p apolline-wall-protocol` passes even with
      `TMPDIR=/some/symlinked/dir`. makepkg's `check()` runs it.
+
+8. **Scenes hear what's playing.**
+   - **Before:** audio-reactive scenes (bars, rings, emitters that listen) ran as if in silence.
+   - **Now:** while an unpaused monitor shows a scene that listens, the daemon runs
+     `parec --device=@DEFAULT_MONITOR@`. It turns what parec hears into 64 bands a side and gives
+     them to the renderer each frame. parec stops when no such scene is shown or all are paused.
+   - **Needs:** `parec`, from `libpulse` on Arch. It works on PipeWire through pipewire-pulse.
+     Without it the log says so once, and scenes stay silent.
+   - **Check:**
+     1. Show an audio visualiser scene and play music. Bars should follow it: bass on the
+        left, treble on the right. The left and right channels are told apart.
+     2. While it shows, `pgrep -a parec` should find one parec.
+     3. Pause the monitor or switch to a picture, and parec should be gone.
+     4. Stop the music, and the bars should fall back smoothly within a fraction of a second.
+   - **Guesses to judge by eye:**
+     - the bands run from 30 Hz to 16 kHz, spread evenly in pitch;
+     - loudness is on a 60 dB scale.
+
+     If a scene looks too quiet, too busy, or crowded at one end compared with Wallpaper Engine
+     on Windows, say which. The numbers are at the top of `src/spectrum.rs`.
 
 ## Merging
 

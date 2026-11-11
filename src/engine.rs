@@ -1,3 +1,4 @@
+mod audio;
 mod crashes;
 mod diagnostics;
 mod monitors;
@@ -156,6 +157,8 @@ pub fn run(mode: Mode) -> Result<(), String> {
         decoder,
         posters,
         pending_posters: HashMap::new(),
+        audio: None,
+        deaf: false,
         kinds: HashMap::new(),
         mpv: None,
         wake,
@@ -295,6 +298,10 @@ struct App {
     decoder: mpsc::Sender<Batch>,
     posters: mpsc::SyncSender<poster::Job>,
     pending_posters: HashMap<String, poster::Job>,
+    /// What's playing, heard while a scene shown moves to it.
+    audio: Option<audio::Listener>,
+    /// Hearing failed, and isn't tried again until no scene listens.
+    deaf: bool,
     /// What each project folder shown is, and when its `project.json` last changed.
     kinds: HashMap<PathBuf, (std::time::SystemTime, Kind)>,
     mpv: Option<Rc<Mpv>>,

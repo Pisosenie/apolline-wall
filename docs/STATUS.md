@@ -51,9 +51,13 @@ All of these were only type-checked for Linux from the Mac (see below):
 
 ## Not done
 
-- **Audio.** Scenes never hear anything: capture PipeWire output, run a 64-bin FFT per channel
-  and pass it to the renderer each frame. Audio-reactive scenes (bars, rings, emitters) stay
-  silent until then.
+- **Audio, unchecked.** Written on the `fix/review-findings` branch, never run:
+  - While an unpaused monitor shows a scene that listens, `src/engine/audio.rs` runs `parec` on
+    the default output's monitor.
+  - `src/spectrum.rs` turns what it hears into 64 bands a side.
+  - Those bands go to the renderer each frame.
+  - The banding and loudness scale are guesses: 30 Hz to 16 kHz, a 60 dB range. Compare them
+    with Wallpaper Engine on Windows if a scene looks too quiet or too busy.
 - The rest of the roadmap: KDE Plasma (step 3) and the rest is in ROADMAP.md.
 
 ## Checking Linux code from a Mac

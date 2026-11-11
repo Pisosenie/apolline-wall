@@ -183,6 +183,38 @@ impl App {
                 self.drop_scene(shared.scene);
             }
         }
+        self.sync_audio();
+    }
+
+    /// Hears what's playing while a scene some unpaused monitor shows moves to it, and stops
+    /// once none does.
+    pub(super) fn sync_audio(&mut self) {
+        let listening = self.scenes.iter().any(|(key, shared)| {
+            matches!(&shared.scene.shader, SceneShader::Native(renderer, _) if renderer.needs().audio)
+                && self
+                    .scene_users(key)
+                    .iter()
+                    .any(|&index| !self.is_paused(&self.screens[index].name))
+        });
+        if !listening {
+            self.audio = None;
+            self.deaf = false;
+            return;
+        }
+        if self.audio.is_some() || self.deaf {
+            return;
+        }
+        match super::audio::Listener::start() {
+            Ok(listener) => self.audio = Some(listener),
+            Err(message) => {
+                self.deaf = true;
+                protocol::emit(&Event::Error {
+                    output: None,
+                    source: None,
+                    message,
+                });
+            }
+        }
     }
 
     /// Called when a monitor showing the scene wants a frame: draws now if one is due, or
@@ -240,6 +272,7 @@ impl App {
             .as_ref()
             .map_or(1.0, |shown| shown.show.look.unwrap_or_default().speed);
         let (fps, accent) = (self.effective_fps(), self.accent);
+        let heard = self.audio.as_ref().map(super::audio::Listener::bands);
         let Some(shared) = self.scenes.get_mut(key) else {
             return;
         };
@@ -247,6 +280,11 @@ impl App {
         let scene = &mut shared.scene;
         if let Some(token) = scene.timer.take() {
             self.handle.remove(token);
+        }
+        if let (SceneShader::Native(renderer, _), Some([left, right])) = (&mut scene.shader, heard)
+            && renderer.needs().audio
+        {
+            renderer.set_spectrum(&left, &right);
         }
         if let SceneShader::Native(renderer, _) = &mut scene.shader
             && renderer.needs().pointer
@@ -259,7 +297,7 @@ impl App {
             let moved = renderer.follow(pointer, seconds);
             // A scene that only follows the pointer draws when it moves, and otherwise looks
             // again a frame later without drawing.
-            if !moved && !renderer.animated() && !paused && !force {
+            if !moved && !renderer.animated() && !renderer.needs().audio && !paused && !force {
                 let wait = std::time::Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
                 scene.timer = due_after(&self.handle, key, id, wait);
                 return;
@@ -357,5 +395,6 @@ impl App {
                 self.step_shared(&key);
             }
         }
+        self.sync_audio();
     }
 }

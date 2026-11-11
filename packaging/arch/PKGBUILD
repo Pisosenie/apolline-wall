@@ -10,6 +10,7 @@ license=('MIT OR Apache-2.0')
 depends=('wayland' 'libglvnd' 'libxkbcommon' 'libgcc' 'glibc')
 optdepends=(
   'mpv: video wallpapers'
+  'libpulse: Wallpaper Engine scenes that move to music (parec)'
   'ffmpeg: video thumbnails in the Wallpapers app'
   'vulkan-icd-loader: faster drawing for the Wallpapers app'
   'noto-fonts-cjk: Chinese, Japanese and Korean titles in the Workshop'
@@ -22,7 +23,7 @@ provides=("$_name")
 conflicts=("$_name")
 # ring's and QuickJS's C parts come out of gcc as LTO objects, which rust's linker (lld) can't read.
 options=('!lto')
-source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=253cbf10ad2e0eb3e3a70bb0f9cfa978c4d20ccc")
+source=("$_name::git+$url.git" "apolline-scene::git+https://github.com/Pisosenie/apolline-scene.git#commit=3032e86e3a38e1096eac8e743f50d20e8b9c2214")
 sha256sums=('SKIP' 'SKIP')
 
 pkgver() {

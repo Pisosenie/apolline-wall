@@ -24,14 +24,15 @@ impl App {
         // A still scene keeps the time of day it was drawn at.
         renderer.set_daytime(shading::daytime());
         // Introspection can find a time declaration whose value the GPU optimizes away. A
-        // scene that follows the pointer keeps moving with it.
-        if !renderer.animated() && !renderer.needs().pointer {
+        // scene that follows the pointer or listens keeps moving with it.
+        let needs = renderer.needs();
+        if !renderer.animated() && !needs.pointer && !needs.audio {
             return self
                 .gl
                 .still_scene(renderer, size, fit)
                 .map(|(texture, pixels)| Native::Still(texture, pixels));
         }
-        // Drawn at its own aspect: the monitors showing it each take their part.
+        // Drawn as the part of it the monitors show: each takes its share of that.
         let budget = {
             let (w, h) = self.shader_size(size);
             f64::from(w) * f64::from(h)
