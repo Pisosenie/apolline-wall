@@ -156,6 +156,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         decoder,
         posters,
         pending_posters: HashMap::new(),
+        kinds: HashMap::new(),
         mpv: None,
         wake,
         endings,
@@ -294,6 +295,8 @@ struct App {
     decoder: mpsc::Sender<Batch>,
     posters: mpsc::SyncSender<poster::Job>,
     pending_posters: HashMap<String, poster::Job>,
+    /// What each project folder shown is, and when its `project.json` last changed.
+    kinds: HashMap<PathBuf, (std::time::SystemTime, Kind)>,
     mpv: Option<Rc<Mpv>>,
     wake: Ping,
     endings: Sender<scenery::Ended>,
@@ -405,10 +408,30 @@ enum SceneShader {
 }
 
 impl App {
+    /// What a source is shown as. A project folder's `project.json` is read again only once
+    /// it changes, not on every refresh of every monitor.
+    fn kind_of(&mut self, path: &std::path::Path) -> Kind {
+        if !path.is_dir() {
+            return source::kind(path);
+        }
+        let changed = std::fs::metadata(path.join("project.json")).and_then(|meta| meta.modified());
+        let Ok(changed) = changed else {
+            return source::kind(path);
+        };
+        if let Some(&(when, kind)) = self.kinds.get(path)
+            && when == changed
+        {
+            return kind;
+        }
+        let kind = source::kind(path);
+        self.kinds.insert(path.to_path_buf(), (changed, kind));
+        kind
+    }
+
     fn command(&mut self, command: Command) {
         if let Command::Show(show) = &command
             && !show.properties.is_empty()
-            && source::kind(&show.source) != Kind::Scene
+            && self.kind_of(&show.source) != Kind::Scene
         {
             protocol::emit(&Event::Error {
                 output: show.output.clone(),
@@ -565,7 +588,7 @@ impl App {
             let (Some(size), Some(show)) = (self.buffer_size(index), self.wanted(index)) else {
                 continue;
             };
-            let kind = source::kind(&show.source);
+            let kind = self.kind_of(&show.source);
             let screen = &self.screens[index];
             if screen.failed.as_ref() == Some(&show) {
                 continue;

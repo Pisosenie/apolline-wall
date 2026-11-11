@@ -242,31 +242,40 @@ pub fn placement(fit: Fit, (sw, sh): (u32, u32), (tw, th): (u32, u32)) -> Uv {
     [x, y, (1.0 - x) / 2.0, (1.0 - y) / 2.0]
 }
 
-/// The canvas for a scene several monitors show: the scene's own aspect, as big as the most
-/// demanding monitor needs, within the `budget` pixels separate canvases would have taken.
+/// The canvas for a scene one or more monitors show: the middle of the scene that any of them
+/// shows, which the scene covers, as big as the most demanding monitor needs, within the
+/// `budget` pixels separate canvases would have taken. A monitor that crops the scene to its
+/// own shape takes only that part, so one portrait monitor gets a portrait canvas.
 pub fn shared_canvas(
     (sw, sh): (f32, f32),
     targets: impl IntoIterator<Item = (Fit, (u32, u32))>,
     budget: f64,
 ) -> (u32, u32) {
     let (sw, sh) = (f64::from(sw.max(1.0)), f64::from(sh.max(1.0)));
-    let needed = targets
-        .into_iter()
-        .map(|(fit, (w, h))| {
-            let (x, y) = (f64::from(w) / sw, f64::from(h) / sh);
-            match fit {
-                Fit::Cover => x.max(y),
-                Fit::Contain | Fit::Blur => x.min(y),
+    // The part of the scene shown, in scene units, and the canvas pixels a scene unit needs.
+    let (mut shown, mut scale) = ((0.0f64, 0.0f64), 0.0f64);
+    for (fit, (w, h)) in targets {
+        let (w, h) = (f64::from(w.max(1)), f64::from(h.max(1)));
+        let (x, y) = (w / sw, h / sh);
+        let (part, needed) = match fit {
+            Fit::Cover => {
+                let needed = x.max(y);
+                ((w / needed, h / needed), needed)
             }
-        })
-        .fold(0.0, f64::max);
-    let mut scale = if needed > 0.0 { needed } else { 1.0 };
-    let pixels = sw * sh * scale * scale;
+            Fit::Contain | Fit::Blur => ((sw, sh), x.min(y)),
+        };
+        shown = (shown.0.max(part.0), shown.1.max(part.1));
+        scale = scale.max(needed);
+    }
+    if scale <= 0.0 {
+        (shown, scale) = ((sw, sh), 1.0);
+    }
+    let pixels = shown.0 * shown.1 * scale * scale;
     if budget > 0.0 && pixels > budget {
         scale *= (budget / pixels).sqrt();
     }
     let side = |n: f64| ((n * scale).round() as u32).clamp(1, 16384);
-    (side(sw), side(sh))
+    (side(shown.0), side(shown.1))
 }
 
 /// A placement for what GL drew, bottom row first.
@@ -321,6 +330,26 @@ mod tests {
             "{w}x{h}"
         );
         assert_eq!(from_gl(WHOLE), UPSIDE_DOWN);
+    }
+
+    #[test]
+    fn a_monitor_that_crops_the_scene_gets_only_its_part_at_its_own_pixels() {
+        let portrait = (Fit::Cover, (1080, 1920));
+        assert_eq!(
+            shared_canvas((1920.0, 1080.0), [portrait], 1080.0 * 1920.0),
+            (1080, 1920)
+        );
+        // Two monitors cropping either side of the middle share the wider of their parts.
+        let narrow = (Fit::Cover, (1000, 1080));
+        let square = (Fit::Cover, (1080, 1080));
+        assert_eq!(
+            shared_canvas((1920.0, 1080.0), [narrow, square], 2.0 * 1080.0 * 1080.0),
+            (1080, 1080)
+        );
+        // One that shows the whole scene makes the canvas the whole scene.
+        let whole = (Fit::Contain, (1080, 1920));
+        let (w, h) = shared_canvas((1920.0, 1080.0), [portrait, whole], 1e9);
+        assert!((w as f32 / h as f32 - 16.0 / 9.0).abs() < 0.01, "{w}x{h}");
     }
 
     #[test]

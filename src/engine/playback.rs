@@ -6,7 +6,7 @@ use super::{App, Picture, Video};
 use crate::picture;
 use crate::protocol::{self, Event, Fit};
 use crate::video::{Happened, Mpv, Player};
-use apolline_wall_protocol::source::poster_path;
+use apolline_wall_protocol::source::{poster_path, project_video};
 
 impl App {
     pub(super) fn start_video(&mut self, index: usize) {
@@ -44,7 +44,7 @@ impl App {
     fn open_video(&mut self, source: &Path) -> Result<Video, String> {
         // A Workshop video project plays the file it names.
         let file = if source.is_dir() {
-            apolline_wall_protocol::source::project_video(source)
+            project_video(source)
                 .ok_or_else(|| format!("{}: no video in the project", source.display()))?
         } else {
             source.to_path_buf()
@@ -121,15 +121,16 @@ impl App {
                 let poster = match result {
                     Ok(()) => poster_path(source),
                     // Only a warning: the video plays on. Without its source the error doesn't
-                    // read as the wallpaper failing, and the poster stays the video itself,
-                    // which a host can tell from a picture.
+                    // read as the wallpaper failing, and the poster stays the video itself
+                    // (a project folder's video file, not the folder), which a host can tell
+                    // from a picture.
                     Err(message) => {
                         protocol::emit(&Event::Error {
                             output: None,
                             source: None,
                             message: format!("{}: poster frame: {message}", source.display()),
                         });
-                        source.to_path_buf()
+                        project_video(source).unwrap_or_else(|| source.to_path_buf())
                     }
                 };
                 let Some(video) = self.videos.get_mut(source) else {

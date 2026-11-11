@@ -177,10 +177,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kind(&dir), Kind::Video);
-        assert_eq!(
-            project_video(&dir),
-            Some(dir.join("clip.mp4").canonicalize().unwrap())
-        );
+        assert_eq!(project_video(&dir), Some(dir.join("clip.mp4")));
         std::fs::write(
             dir.join("project.json"),
             r#"{"type":"video","file":"../etc/passwd"}"#,

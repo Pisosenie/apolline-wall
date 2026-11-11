@@ -169,8 +169,9 @@ fn run(
     }
     let root = &setup.root;
     std::fs::create_dir_all(root).map_err(|err| format!("{}: {err}", root.display()))?;
+    let login = Login::write(root, account)?;
     let (master, slave) = terminal()?;
-    let mut child = command(setup, job, account, &slave)?
+    let mut child = command(setup, job, &login.0, &slave)?
         .spawn()
         .map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => format!(
@@ -223,12 +224,40 @@ fn run(
     reading.verdict(job, status.success(), &content)
 }
 
-fn command(setup: &Setup, job: &Job, account: &str, slave: &OwnedFd) -> Result<Command, String> {
+/// A script that signs in, so the account name isn't on a command line other users can read.
+/// It is removed when the run ends.
+struct Login(PathBuf);
+
+impl Login {
+    fn write(root: &Path, account: &str) -> Result<Login, String> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = root.join("login.txt");
+        let _ = std::fs::remove_file(&path);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|err| format!("{}: {err}", path.display()))?;
+        file.write_all(format!("login {account}\n").as_bytes())
+            .map_err(|err| format!("{}: {err}", path.display()))?;
+        Ok(Login(path))
+    }
+}
+
+impl Drop for Login {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn command(setup: &Setup, job: &Job, login: &Path, slave: &OwnedFd) -> Result<Command, String> {
     let mut command = Command::new(&setup.program);
     command
         .args(["+@ShutdownOnFailedCommand", "1", "+force_install_dir"])
         .arg(&setup.root)
-        .args(["+login", account]);
+        .arg("+runscript")
+        .arg(login);
     match job {
         Job::SignIn => command.args(["+licenses_for_app", APP]),
         Job::Download(id) => command.args(["+workshop_download_item", APP, id]),

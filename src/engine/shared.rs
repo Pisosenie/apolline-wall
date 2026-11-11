@@ -269,7 +269,12 @@ impl App {
             self.shared_failed(key, message);
             return;
         }
+        // A paused monitor keeps the frame it has while the others go on, unless the canvas
+        // it shows was just made anew.
         for index in users {
+            if !force && self.is_paused(&self.screens[index].name) {
+                continue;
+            }
             if self.screens[index].frame_pending {
                 self.screens[index].stale = true;
             } else {

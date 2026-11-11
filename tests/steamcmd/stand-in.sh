@@ -5,7 +5,7 @@
 while [ $# -gt 0 ]; do
     case $1 in
         +force_install_dir) root=$2; shift 2 ;;
-        +login) account=$2; shift 2 ;;
+        +runscript) account=$(sed -n 's/^login //p' "$2"); shift 2 ;;
         +licenses_for_app) licenses=1; shift 2 ;;
         +workshop_download_item) item=$3; shift 3 ;;
         *) shift ;;

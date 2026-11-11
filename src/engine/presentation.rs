@@ -145,6 +145,8 @@ impl App {
         self.draw(index);
         self.close_unused_videos();
         self.close_unused_scenes();
+        // A scene this monitor left may now need a smaller canvas, one it joined a larger one.
+        self.fit_scenes();
         self.sync_pauses();
     }
 
