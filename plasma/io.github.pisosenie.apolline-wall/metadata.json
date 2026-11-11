@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Danil Zorin"
+            }
+        ],
+        "Description": "Shows what apolline-wall draws: videos, shaders and Wallpaper Engine scenes",
+        "Icon": "preferences-desktop-wallpaper",
+        "Id": "io.github.pisosenie.apolline-wall",
+        "License": "MIT OR Apache-2.0",
+        "Name": "apolline-wall",
+        "Version": "0.1.0",
+        "Website": "https://github.com/Pisosenie/apolline-wall"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

@@ -174,8 +174,10 @@ impl App {
 
     /// Takes our surface away so the renderer's is what shows.
     fn hide(&mut self, index: usize) {
-        drop(self.screens[index].target.take());
+        self.release_target(index);
         match &self.screens[index].surface {
+            // Fed to Plasma's plugin, there is no surface of ours to take away.
+            _ if self.screens[index].feed.is_some() => {}
             Surface::Wayland(_) => self.wayland_hide(index),
             Surface::X11(window) => self.x11_hide(window.id()),
         }
@@ -186,19 +188,21 @@ impl App {
         if !self.screens[index].hidden {
             return;
         }
-        drop(self.screens[index].target.take());
+        self.release_target(index);
+        let fed = self.screens[index].feed.is_some();
         let x11 = match &self.screens[index].surface {
             Surface::Wayland(_) => None,
             Surface::X11(window) => Some(window.id()),
         };
         match x11 {
+            _ if fed => {}
             None => self.wayland_reopen(index),
             Some(id) => self.x11_show(id),
         }
         let screen = &mut self.screens[index];
         screen.frame_pending = false;
         screen.hidden = false;
-        if x11.is_some() {
+        if x11.is_some() || fed {
             self.place(index);
         }
     }

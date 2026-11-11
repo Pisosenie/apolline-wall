@@ -27,7 +27,7 @@ jobs:
           git clone --quiet https://github.com/Pisosenie/apolline-scene.git
           git -C apolline-scene checkout --quiet "$commit"
       - name: Build dependencies
-        run: sudo apt-get update -q && sudo apt-get install -yq libwayland-dev pkg-config
+        run: sudo apt-get update -q && sudo apt-get install -yq libwayland-dev pkg-config libpipewire-0.3-dev libspa-0.2-dev libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt

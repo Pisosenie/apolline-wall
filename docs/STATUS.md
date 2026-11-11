@@ -31,7 +31,8 @@ Arch, niri, NVIDIA RTX 4070 Ti, two monitors. fmt, clippy and the 123 tests pass
 
 All of these were only type-checked for Linux from the Mac (see below):
 
-- GNOME through the extension in `gnome/`, and X11 sessions;
+- KDE Plasma 6 (the bottom layer and the wallpaper plugin in `plasma/`, on the `kde-plasma`
+  branch), GNOME through the extension in `gnome/`, and X11 sessions;
 - real `steamcmd` downloads;
 - `linux-wallpaperengine` as the fallback.
 
@@ -58,7 +59,8 @@ All of these were only type-checked for Linux from the Mac (see below):
   - Those bands go to the renderer each frame.
   - The banding and loudness scale are guesses: 30 Hz to 16 kHz, a 60 dB range. Compare them
     with Wallpaper Engine on Windows if a scene looks too quiet or too busy.
-- The rest of the roadmap: KDE Plasma (step 3) and the rest is in ROADMAP.md.
+- KDE Plasma: dmabuf or an asynchronous readback instead of reading each frame back in place,
+  once the Plasma check gives numbers (step 3); the rest is in ROADMAP.md.
 
 ## Checking Linux code from a Mac
 
@@ -67,3 +69,13 @@ All of these were only type-checked for Linux from the Mac (see below):
 `CC_x86_64_unknown_linux_gnu` and `AR_x86_64_unknown_linux_gnu` to stub scripts: the C compiler
 stub only creates its `-o` output, and the archiver stub writes `!<arch>\n`. On the Linux machine
 none of this is needed.
+
+The `pipewire` crate also needs PipeWire's headers for bindgen. Take `src/pipewire` and
+`spa/include` from a PipeWire release tarball, write `pipewire/version.h` from `version.h.in`,
+and use Alpine's `musl-dev` and `linux-headers` packages for libc headers. Then set:
+- `PKG_CONFIG` to a script that prints `-I` flags for `libpipewire-0.3` and `libspa-0.2`;
+- `PKG_CONFIG_ALLOW_CROSS=1`;
+- `LIBCLANG_PATH` to the Command Line Tools' `usr/lib`;
+- `BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_gnu` to
+  `--target=x86_64-unknown-linux-musl -nostdinc`, with clang's own include folder and the musl
+  headers as `-isystem`.

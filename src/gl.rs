@@ -32,9 +32,11 @@ pub use shader::{Inputs, Shader};
 
 const VERTEX: &str = "#version 300 es
 out vec2 uv;
+// 1 draws the top row at the bottom, for a frame read back to memory top row first.
+uniform float downward;
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-    uv = vec2(p.x, 1.0 - p.y);
+    uv = vec2(p.x, mix(1.0 - p.y, p.y, downward));
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }";
 
@@ -104,11 +106,19 @@ struct Program {
     before_tone: glow::UniformLocation,
     after_tone: glow::UniformLocation,
     progress: glow::UniformLocation,
+    downward: glow::UniformLocation,
 }
 
+/// What a monitor's frames are drawn into: its window, or, for a monitor whose frames go to
+/// another program, a canvas they are read back from.
 pub struct Target {
-    surface: Surface<WindowSurface>,
+    kind: Kind,
     size: (u32, u32),
+}
+
+enum Kind {
+    Window(Surface<WindowSurface>),
+    Offscreen(Canvas),
 }
 
 impl Target {
@@ -233,14 +243,73 @@ impl Gl {
         surface
             .set_swap_interval(&self.context, SwapInterval::DontWait)
             .map_err(|err| err.to_string())?;
-        Ok(Target { surface, size })
+        Ok(Target {
+            kind: Kind::Window(surface),
+            size,
+        })
+    }
+
+    pub fn offscreen(&self, size: (u32, u32)) -> Result<Target, String> {
+        Ok(Target {
+            kind: Kind::Offscreen(self.canvas(size)?),
+            size,
+        })
     }
 
     pub fn resize(&self, target: &mut Target, size: (u32, u32)) -> Result<(), String> {
         let (w, h) = nonzero(size)?;
-        target.surface.resize(&self.context, w, h);
+        match &mut target.kind {
+            Kind::Window(surface) => surface.resize(&self.context, w, h),
+            Kind::Offscreen(canvas) => {
+                let fresh = self.canvas(size)?;
+                self.free(std::mem::replace(canvas, fresh));
+            }
+        }
         target.size = size;
         Ok(())
+    }
+
+    /// An offscreen target's canvas goes back to GL; a window's surface goes on drop.
+    pub fn release(&self, target: Target) {
+        if let Kind::Offscreen(canvas) = target.kind {
+            self.free(canvas);
+        }
+    }
+
+    /// The last frame drawn offscreen, top row first, as RGBA bytes into `into`.
+    pub fn read_frame(&self, target: &Target, into: &mut [u8]) -> Result<(), String> {
+        let Kind::Offscreen(canvas) = &target.kind else {
+            return Err("only an offscreen frame can be read back".into());
+        };
+        let (w, h) = target.size;
+        if into.len() < picture::pixel_bytes(w, h)? {
+            return Err(format!("{} bytes can't hold a {w}x{h} frame", into.len()));
+        }
+        self.current()?;
+        let gl = &self.gl;
+        unsafe {
+            clear_errors(gl);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(canvas.framebuffer));
+            gl.bind_buffer(glow::PIXEL_PACK_BUFFER, None);
+            gl.pixel_store_i32(glow::PACK_ALIGNMENT, 4);
+            gl.pixel_store_i32(glow::PACK_ROW_LENGTH, 0);
+            gl.pixel_store_i32(glow::PACK_SKIP_ROWS, 0);
+            gl.pixel_store_i32(glow::PACK_SKIP_PIXELS, 0);
+            gl.read_pixels(
+                0,
+                0,
+                w as i32,
+                h as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(into)),
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            match gl.get_error() {
+                glow::NO_ERROR => Ok(()),
+                error => Err(format!("reading a frame back failed (GL {error:#x})")),
+            }
+        }
     }
 
     pub fn upload(&self, pixels: &Pixels) -> Result<Texture, String> {
@@ -328,15 +397,24 @@ impl Gl {
         after: Layer,
         progress: f32,
     ) -> Result<(), String> {
-        self.context
-            .make_current(&target.surface)
-            .map_err(|err| err.to_string())?;
+        let (framebuffer, downward) = match &target.kind {
+            Kind::Window(surface) => {
+                self.context
+                    .make_current(surface)
+                    .map_err(|err| err.to_string())?;
+                (None, 0.0)
+            }
+            Kind::Offscreen(canvas) => {
+                self.current()?;
+                (Some(canvas.framebuffer), 1.0)
+            }
+        };
         let gl = &self.gl;
         let before = before.unwrap_or(after);
         let program = &self.program;
         // libmpv draws with the same context and leaves its own state behind.
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, framebuffer);
             gl.disable(glow::BLEND);
             gl.disable(glow::SCISSOR_TEST);
             gl.use_program(Some(program.id));
@@ -353,12 +431,18 @@ impl Gl {
             gl.uniform_4_f32_slice(Some(&program.before_tone), &before.tone);
             gl.uniform_4_f32_slice(Some(&program.after_tone), &after.tone);
             gl.uniform_1_f32(Some(&program.progress), progress);
+            gl.uniform_1_f32(Some(&program.downward), downward);
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
-        target
-            .surface
-            .swap_buffers(&self.context)
-            .map_err(|err| err.to_string())
+        match &target.kind {
+            Kind::Window(surface) => surface
+                .swap_buffers(&self.context)
+                .map_err(|err| err.to_string()),
+            Kind::Offscreen(_) => {
+                unsafe { gl.bind_framebuffer(glow::FRAMEBUFFER, None) };
+                Ok(())
+            }
+        }
     }
 }
 
@@ -460,6 +544,7 @@ unsafe fn program(gl: &glow::Context) -> Result<Program, String> {
             before_tone: uniform("before_tone")?,
             after_tone: uniform("after_tone")?,
             progress: uniform("progress")?,
+            downward: uniform("downward")?,
         })
     }
 }

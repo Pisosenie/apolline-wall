@@ -11,7 +11,7 @@ Workshop scenes drawn natively by its own renderer, with particles, effects and 
 
 <p align="center"><a href="#quick-start">Quick start</a> · <a href="#installing">Install</a> · <a href="#how-to">How to</a> · <a href="#troubleshooting">Troubleshooting</a> · <a href="#talking-to-it">Protocol</a> · <a href="#what-is-stable">What is stable</a></p>
 
-apolline-wall puts moving wallpapers on a Linux desktop the way Wallpaper Engine does on Windows, and reads Wallpaper Engine's own Workshop items to do it. Videos play through libmpv, Shadertoy shaders run as they are, and Wallpaper Engine scenes are drawn by [apolline-scene](https://github.com/Pisosenie/apolline-scene), a renderer written for this, so a scene gets the same crossfades, looks, pause and frame limits as everything else. It draws on a layer-shell surface per monitor with GLES at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC; on GNOME its Shell extension puts a window per monitor behind everything, and in X11 sessions it draws in a desktop window per monitor. [Apolline](https://github.com/Pisosenie/apolline) runs it as a child process, so video decoding never ends up inside the shell. Arch first; [`docs/ROADMAP.md`](docs/ROADMAP.md) says what comes next.
+apolline-wall puts moving wallpapers on a Linux desktop the way Wallpaper Engine does on Windows, and reads Wallpaper Engine's own Workshop items to do it. Videos play through libmpv, Shadertoy shaders run as they are, and Wallpaper Engine scenes are drawn by [apolline-scene](https://github.com/Pisosenie/apolline-scene), a renderer written for this, so a scene gets the same crossfades, looks, pause and frame limits as everything else. It draws on a layer-shell surface per monitor with GLES at each monitor's physical resolution, so it runs on niri, Hyprland, sway, river, labwc, Wayfire and COSMIC; on KDE Plasma a wallpaper plugin shows it under Plasma's icons and widgets; on GNOME its Shell extension puts a window per monitor behind everything, and in X11 sessions it draws in a desktop window per monitor. [Apolline](https://github.com/Pisosenie/apolline) runs it as a child process, so video decoding never ends up inside the shell. Arch first; [`docs/ROADMAP.md`](docs/ROADMAP.md) says what comes next.
 
 ## At a glance
 
@@ -23,7 +23,7 @@ apolline-wall puts moving wallpapers on a Linux desktop the way Wallpaper Engine
 | **Wallpaper Engine** | videos and scenes from your Workshop subscriptions; scenes natively, web wallpapers and the rest through [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) |
 | **Per monitor** | its own wallpaper, fit (cover, contain, blur), look and playlist, following the monitor across ports |
 | **When unseen** | paused on lock, before sleep, optionally on battery; no timers or decoding while nothing is visible |
-| **Desktops** | niri, Hyprland, sway, river, labwc, Wayfire, COSMIC; GNOME 45–49 and X11 sessions written but not yet run on real hardware; KDE Plasma later |
+| **Desktops** | niri, Hyprland, sway, river, labwc, Wayfire, COSMIC; KDE Plasma 6, GNOME 45–49 and X11 sessions written but not yet run on real hardware |
 | **Ways in** | `apolline-wall` CLI, the `apolline-wallpapers` app and tray, JSON lines over a socket, or Apolline's Settings |
 
 ## Quick start
@@ -137,9 +137,18 @@ or start it from your compositor:
 | niri | `spawn-at-startup "apolline-wall" "daemon"` in `config.kdl` |
 | Hyprland | `exec-once = apolline-wall daemon` |
 | sway | `exec apolline-wall daemon` |
+| KDE Plasma | the systemd line above, then pick **apolline-wall** under Desktop and Wallpaper → Wallpaper type (see below) |
 | GNOME | `gnome-extensions enable apolline-wall@pisosenie.github.io`, log out and back in, then the systemd line above |
 
 A second instance finds the socket alive and leaves, so starting it twice is harmless.
+
+### KDE Plasma
+
+Plasma 6 draws its own desktop, icons and widgets included, as an opaque surface on layer-shell's background layer, so a wallpaper there would never show. The package installs a Plasma wallpaper plugin instead: right-click the desktop → Desktop and Wallpaper → Wallpaper type → **apolline-wall**, on each monitor. The plugin asks the daemon for its monitor (`apolline-wall feed <connector>`); the daemon then draws that monitor offscreen and sends its frames to a PipeWire stream, which the plugin plays inside Plasma's desktop, under its icons and widgets. Everything else, from `apolline-wall set` to the Wallpapers app, works as on any other desktop.
+
+Until a monitor's plugin asks, and on a monitor that never used the plugin, the daemon draws on the bottom layer: over Plasma's desktop, under windows and panels, with clicks passing through to the desktop, but covering its icons and widgets.
+
+A monitor whose desktop a maximized or fullscreen window hides pauses, the way Plasma's own animated wallpapers do; the plugin tells the daemon, and the "behind fullscreen windows" rule turns it off. Limits for now: frames are read back from the GPU and copied, which costs more than drawing on a surface of our own; scenes that follow the pointer hold still; and scenes left to linux-wallpaperengine don't show through the plugin. Needs `kpipewire` (installed with Plasma). It has not been run on Plasma yet.
 
 ### GNOME
 
@@ -282,13 +291,14 @@ The daemon listens on `$XDG_RUNTIME_DIR/apolline-wall/control.sock`: one JSON co
 | `{"step":{"previous":false}}` | next or previous entry; `"output"` for one monitor, otherwise every active playlist once |
 | `{"policy":{...}}` | `pause_on_lock`, `pause_on_sleep`, `pause_on_fullscreen`, `battery` (`keep`/`reduce`/`pause`), `battery_fps`, `battery_scale` |
 | `{"session":{"locked":true}}` | the shell's lock state, for shells that don't update logind |
+| `{"feed":{"output":"DP-1"}}` | Plasma's wallpaper plugin asking for a monitor's frames as a PipeWire stream instead of a surface of its own, until the daemon restarts |
 | `{"status":{}}` | answered to whoever asked with a `status` event |
 
 Events go to stdout and to every socket client:
 
 - `{"ready":{"output","source","poster"}}` once a monitor shows the new wallpaper; `poster` is a still image of it, for the shell's accent and the lock screen.
 - `{"error":{"output","source","message"}}` when a file can't be shown or a line isn't a command. A file that failed is not retried until the next `show`.
-- `{"status":{...}}`: each monitor's `name`, `source`, effective `paused`, `manual_paused`, an optional `pause_reason`, `native_scene` and `animated_scene` for scenes, and `playlist_status` (`position`, `total`, `skipped`, `shared`, `suspended`, `can_step`); the requested `fps` and `scale`, and a `power` object with what logind and UPower report and the effective fps. After `pause`, `limits`, `uniforms` and `adjust` every client gets a fresh one.
+- `{"status":{...}}`: each monitor's `name`, `source`, effective `paused`, `manual_paused`, an optional `pause_reason`, `native_scene` and `animated_scene` for scenes, `feed` (its PipeWire `node`, and `stream`, which unlike node ids is never reused) while Plasma's plugin shows it, and `playlist_status` (`position`, `total`, `skipped`, `shared`, `suspended`, `can_step`); the requested `fps` and `scale`, and a `power` object with what logind and UPower report and the effective fps. After `pause`, `limits`, `uniforms` and `adjust` every client gets a fresh one.
 
 ## Videos
 
@@ -348,7 +358,7 @@ Scene entries show the controls their author declared: checkboxes, sliders, colo
 
 ## Automatic playback rules
 
-Settings → Automatic playback (or `apolline-wall policy`) decides what happens on lock, before sleep, on battery and, on X11, under fullscreen windows. Lock and sleep pause by default; battery defaults to keep running. **Reduce** caps shaders and scenes at 15 fps and 50 % resolution without raising a lower limit of yours; videos keep their quality, so choose **Pause** to stop them instead. Rules belong to the daemon and survive a restart; conditions themselves don't.
+Settings → Automatic playback (or `apolline-wall policy`) decides what happens on lock, before sleep, on battery and under windows that hide the desktop: fullscreen ones on X11, maximized or fullscreen ones on Plasma through its wallpaper plugin. Lock and sleep pause by default; battery defaults to keep running. **Reduce** caps shaders and scenes at 15 fps and 50 % resolution without raising a lower limit of yours; videos keep their quality, so choose **Pause** to stop them instead. Rules belong to the daemon and survive a restart; conditions themselves don't.
 
 - System state comes from logind (or elogind) and UPower over D-Bus signals, with no polling while connected. A service not on the bus is waited for through `NameOwnerChanged`; what it said last is cleared when it goes. Settings shows which integrations are available. No D-Bus service is needed for manual controls.
 - A sleep delay inhibitor, when permitted, holds sleep until the pause is processed, for at most a second.
@@ -382,7 +392,7 @@ CI formats, lints with `clippy -D warnings` and tests on Ubuntu 22.04, x86_64 an
 
 Run on real hardware (Arch, niri, an NVIDIA RTX 4070 Ti, two monitors, one turned): pictures, videos, shaders, native scenes and Apolline's integration. The app's playlist controls and tray are compiled and unit-tested, but their layout still needs a graphical check.
 
-Written and tested only against stand-ins or synthetic input so far: GNOME through the extension, X11 sessions, real `steamcmd` downloads, linux-wallpaperengine as the fallback, real sleep, lock and battery transitions, X11 fullscreen pause, and Mesa (AMD and Intel) on real Workshop scenes. Audio for scenes is written but not yet run. Not done: KDE Plasma, Fedora and Flatpak packages. Reports are welcome; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the plan and [`docs/STATUS.md`](docs/STATUS.md) where things stand.
+Written and tested only against stand-ins or synthetic input so far: GNOME through the extension, X11 sessions, real `steamcmd` downloads, linux-wallpaperengine as the fallback, real sleep, lock and battery transitions, X11 fullscreen pause, and Mesa (AMD and Intel) on real Workshop scenes. Audio for scenes is written but not yet run. KDE Plasma is written but not yet run. Not done: Fedora and Flatpak packages. Reports are welcome; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the plan and [`docs/STATUS.md`](docs/STATUS.md) where things stand.
 
 ## License
 

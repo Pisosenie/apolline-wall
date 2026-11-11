@@ -1,6 +1,7 @@
 mod audio;
 mod crashes;
 mod diagnostics;
+mod feed;
 mod monitors;
 mod native;
 mod playback;
@@ -15,18 +16,17 @@ mod selection;
 mod shading;
 mod shared;
 mod socket;
+mod startup;
 mod system;
 mod wayland;
 mod x11;
 
 use std::collections::HashMap;
-use std::io::BufRead;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use raw_window_handle::RawDisplayHandle;
 use smithay_client_toolkit::reexports::calloop::channel::{self, Sender};
 use smithay_client_toolkit::reexports::calloop::ping::{self, Ping};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopHandle};
@@ -64,12 +64,12 @@ pub fn run(mode: Mode) -> Result<(), String> {
     shading::local_time_zone();
     let mut event_loop = EventLoop::<App>::try_new().map_err(|err| err.to_string())?;
     let handle = event_loop.handle();
-    let (desktop, display, platform) = connect(&handle)?;
+    let (desktop, display, platform) = startup::connect(&handle)?;
     socket::serve(&handle)?;
 
     if let Mode::Child = mode {
         let (commands, incoming) = channel::channel();
-        std::thread::spawn(move || read_commands(commands));
+        std::thread::spawn(move || startup::read_commands(commands));
         handle
             .insert_source(incoming, |event, _, app: &mut App| match event {
                 channel::Event::Msg(Ok(command)) => app.command(command),
@@ -143,6 +143,14 @@ pub fn run(mode: Mode) -> Result<(), String> {
         })
         .map_err(|err| err.to_string())?;
     system::start(system_updates);
+    let (feed_changes, feed_events) = channel::channel();
+    handle
+        .insert_source(feed_events, |event, _, app: &mut App| {
+            if let channel::Event::Msg(change) = event {
+                app.feed_changed(change);
+            }
+        })
+        .map_err(|err| err.to_string())?;
     let mut app = App {
         screens: Vec::new(),
         videos: HashMap::new(),
@@ -160,6 +168,8 @@ pub fn run(mode: Mode) -> Result<(), String> {
         audio: None,
         deaf: false,
         kinds: HashMap::new(),
+        pipewire: None,
+        feed_changes,
         mpv: None,
         wake,
         endings,
@@ -176,7 +186,7 @@ pub fn run(mode: Mode) -> Result<(), String> {
         exit: false,
     };
     if let Mode::Daemon = mode {
-        app.persist = restore(&mut app);
+        app.persist = startup::restore(&mut app);
         app.recover();
     }
     app.discover();
@@ -202,85 +212,6 @@ pub fn run(mode: Mode) -> Result<(), String> {
     Ok(())
 }
 
-/// Wayland when there is one, X11 otherwise. A Wayland session that can't host a background,
-/// GNOME without the Shell extension, still has Xwayland, whose desktop-type windows its
-/// window manager keeps under everything.
-fn connect(
-    handle: &LoopHandle<'static, App>,
-) -> Result<(Desktop, RawDisplayHandle, Platform), String> {
-    let x11 = std::env::var_os("DISPLAY").is_some();
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        match wayland::connect(handle) {
-            Ok((wayland, display, platform)) => {
-                return Ok((Desktop::Wayland(wayland), display, platform));
-            }
-            Err(why) if x11 => eprintln!("apolline-wall: {why}; drawing through Xwayland instead"),
-            Err(why) => return Err(why),
-        }
-    }
-    if x11 {
-        let (x11, display, platform) = x11::connect(handle)?;
-        return Ok((Desktop::X11(x11), display, platform));
-    }
-    Err("no display to draw on: neither WAYLAND_DISPLAY nor DISPLAY is set".into())
-}
-
-/// Replays the last session; a state file that doesn't parse is reported and left alone.
-fn restore(app: &mut App) -> Option<Persist> {
-    let path = state::path()?;
-    match state::load(&path) {
-        Ok(saved) => {
-            for command in saved.commands() {
-                match command {
-                    Command::Show(show) => match &show.output {
-                        None => app.selection.everywhere = Some(show),
-                        Some(output) => {
-                            app.selection.per_output.insert(output.clone(), show);
-                        }
-                    },
-                    other => app.command(other),
-                }
-            }
-            app.selection.inherited = saved
-                .outputs
-                .iter()
-                .filter(|(name, entry)| {
-                    entry.follows_default
-                        && !saved.playlists.contains_key(*name)
-                        && saved
-                            .wallpaper
-                            .as_ref()
-                            .is_some_and(|default| default.source == entry.source)
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            app.restore_rotation_positions();
-            Some(Persist {
-                path,
-                good: saved.clone(),
-                state: saved,
-            })
-        }
-        Err(message) => {
-            protocol::emit(&Event::Error {
-                output: None,
-                source: None,
-                message: format!("{message}; not saving until it's fixed"),
-            });
-            None
-        }
-    }
-}
-
-fn read_commands(commands: Sender<Result<Command, String>>) {
-    for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
-        if !line.trim().is_empty() && commands.send(protocol::parse(&line)).is_err() {
-            break;
-        }
-    }
-}
-
 struct App {
     screens: Vec<Screen>,
     videos: HashMap<PathBuf, Video>,
@@ -304,6 +235,9 @@ struct App {
     deaf: bool,
     /// What each project folder shown is, and when its `project.json` last changed.
     kinds: HashMap<PathBuf, (std::time::SystemTime, Kind)>,
+    /// Plasma's wallpaper plugin's way in, once it has asked for a monitor.
+    pipewire: Option<feed::Pipewire>,
+    feed_changes: Sender<feed::Change>,
     mpv: Option<Rc<Mpv>>,
     wake: Ping,
     endings: Sender<scenery::Ended>,
@@ -344,6 +278,8 @@ struct Screen {
     hidden: bool,
     /// Where the pointer was last over it, -1 to 1 across it with y up.
     pointer: [f32; 2],
+    /// Its frames go to Plasma's wallpaper plugin instead of its own surface.
+    feed: Option<feed::Feed>,
 }
 
 enum Picture {
@@ -501,6 +437,7 @@ impl App {
             Command::Limits(limits) => self.limit(limits),
             Command::Uniforms(uniforms) => self.tint(uniforms),
             Command::Adjust(adjust) => self.adjust(adjust),
+            Command::Feed(feed) => self.feed(&feed.output, feed.covered),
             Command::Status {} => protocol::emit(&self.status()),
         }
         if announce {
@@ -554,7 +491,8 @@ impl App {
             outputs: self
                 .screens
                 .iter()
-                .map(|screen| Monitor {
+                .enumerate()
+                .map(|(index, screen)| Monitor {
                     name: screen.name.clone(),
                     source: screen.shown.as_ref().map(|shown| shown.show.source.clone()),
                     paused: self.is_paused(&screen.name),
@@ -575,6 +513,7 @@ impl App {
                         .as_ref()
                         .and_then(|shown| shown.show.look)
                         .filter(|look| !look.is_plain()),
+                    feed: self.feed_stream(index),
                 })
                 .collect(),
             fps: self.fps,
@@ -729,6 +668,7 @@ impl App {
     /// Asks to hear when the monitor is ready for another frame.
     fn want_frame(&mut self, index: usize) {
         match &self.screens[index].surface {
+            _ if self.screens[index].feed.is_some() => self.feed_frame(index),
             Surface::Wayland(_) => self.wayland_frame(index),
             Surface::X11(_) => self.x11_frame(index),
         }
@@ -739,6 +679,9 @@ impl App {
         let Some(size) = self.buffer_size(index) else {
             return;
         };
+        if self.screens[index].feed.is_some() {
+            return self.place_feed(index, size);
+        }
         let window = match &self.screens[index].surface {
             Surface::Wayland(_) => self.wayland_prepare(index),
             Surface::X11(window) => Some(window.handle()),
@@ -788,8 +731,15 @@ impl App {
             failed: None,
             hidden: false,
             pointer: [0.0; 2],
+            feed: None,
         });
         self.screens.len() - 1
+    }
+
+    fn release_target(&mut self, index: usize) {
+        if let Some(target) = self.screens[index].target.take() {
+            self.gl.release(target);
+        }
     }
 
     fn index_of(&self, id: u64) -> Option<usize> {
@@ -823,7 +773,9 @@ impl App {
     fn forget(&mut self, index: usize) {
         let mut screen = self.screens.remove(index);
         self.pending_posters.remove(&screen.name);
-        drop(screen.target.take());
+        if let Some(target) = screen.target.take() {
+            self.gl.release(target);
+        }
         let still = screen.shown.and_then(|shown| match shown.picture {
             Picture::Still(texture) | Picture::Native(texture) => Some(texture),
             Picture::Video(_) | Picture::Scene(_) => None,

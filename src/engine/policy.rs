@@ -66,7 +66,7 @@ impl App {
                     .screens
                     .iter()
                     .any(|screen| screen.name == name && screen.covered))
-            .then_some("Fullscreen window")
+            .then_some("Covered by a window")
         })
     }
 

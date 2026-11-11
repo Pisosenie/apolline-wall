@@ -18,6 +18,8 @@ usage:
   apolline-wall policy [--battery keep|reduce|pause] [--lock true|false] [--sleep true|false] [--fullscreen true|false]
   apolline-wall session locked|unlocked       report shell lock state
   apolline-wall status
+  apolline-wall feed NAME [--covered true|false]
+                                            send a monitor to Plasma's wallpaper plugin; prints its PipeWire node and stream
 
 PATH is a picture, a video (mp4, webm, mkv, mov, gif, ...), a Shadertoy shader (.frag, .glsl)
 or a Wallpaper Engine project folder.
@@ -116,6 +118,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
             options.only(&[])?;
             options.no_path()?;
             print!("{}", describe(&status(&mut connect()?)?));
+            Ok(())
+        }
+        "feed" => {
+            options.only(&["covered"])?;
+            let output = options.path.clone().ok_or("feed needs a monitor's name")?;
+            println!("{}", feed(&output, options.number("covered")?)?);
             Ok(())
         }
         "help" | "--help" | "-h" => {
@@ -291,6 +299,44 @@ fn status(stream: &mut UnixStream) -> Result<Event, String> {
     Err("apolline-wall didn't answer".into())
 }
 
+/// The node `output`'s frames go to, and which stream it is. The stream takes a moment to
+/// appear, so the first ask may only start it; Plasma's plugin asks again.
+fn feed(output: &str, covered: Option<bool>) -> Result<String, String> {
+    let mut stream = connect()?;
+    write(
+        &mut stream,
+        &Command::Feed(protocol::Feed {
+            output: output.to_owned(),
+            covered,
+        }),
+    )?;
+    write(&mut stream, &Command::Status {})?;
+    let mut reader = BufReader::new(stream.try_clone().map_err(|err| err.to_string())?);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut failure = None;
+    while Instant::now() < deadline {
+        match next_event(&mut reader)? {
+            Some(Event::Status { outputs, .. }) => {
+                let node = outputs
+                    .iter()
+                    .find(|monitor| monitor.name == output)
+                    .and_then(|monitor| monitor.feed)
+                    .map(|feed| format!("{} {}", feed.node, feed.stream));
+                return node.ok_or_else(|| {
+                    failure.unwrap_or_else(|| format!("{output}'s stream isn't ready yet"))
+                });
+            }
+            Some(Event::Error {
+                output: Some(name),
+                message,
+                ..
+            }) if name == output => failure = Some(message),
+            _ => continue,
+        }
+    }
+    Err("apolline-wall didn't answer".into())
+}
+
 /// One event, or None when nothing arrived before the read timeout.
 fn next_event(reader: &mut impl BufRead) -> Result<Option<Event>, String> {
     let mut line = String::new();
@@ -391,6 +437,7 @@ mod tests {
                 .contains("/nowhere/fog.jpg")
         );
         assert!(run(&args("dance")).unwrap_err().contains("unknown command"));
+        assert!(run(&args("feed")).unwrap_err().contains("monitor's name"));
     }
 
     #[test]
@@ -409,6 +456,7 @@ mod tests {
                     playlist: false,
                     playlist_status: None,
                     look: None,
+                    feed: None,
                 },
                 Monitor {
                     name: "HDMI-A-1".into(),
@@ -421,6 +469,7 @@ mod tests {
                     playlist: false,
                     playlist_status: None,
                     look: None,
+                    feed: None,
                 },
             ],
             fps: 30,

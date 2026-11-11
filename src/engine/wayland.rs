@@ -272,7 +272,11 @@ impl CompositorHandler for App {
     }
 
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &WlSurface, _: u32) {
-        if let Some(index) = self.screen_of(surface) {
+        // A monitor fed to Plasma's plugin keeps its own clock; a callback left over from its
+        // surface would start a second one.
+        if let Some(index) = self.screen_of(surface)
+            && self.screens[index].feed.is_none()
+        {
             self.frame_done(index);
         }
     }

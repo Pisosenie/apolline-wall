@@ -229,20 +229,23 @@ impl App {
         if (fading || playing) && !screen.frame_pending {
             self.want_frame(index);
         }
-        let screen = &mut self.screens[index];
-        screen.stale = false;
-        let Some(target) = &screen.target else {
+        self.screens[index].stale = false;
+        let Some(target) = &self.screens[index].target else {
             return;
         };
         let eased = progress * progress * (3.0 - 2.0 * progress);
-        if let Err(message) = self.gl.draw(target, before, after, eased.min(1.0)) {
+        let drawn = self
+            .gl
+            .draw(target, before, after, eased.min(1.0))
+            .and_then(|()| self.push_feed(index));
+        if let Err(message) = drawn {
             protocol::emit(&Event::Error {
-                output: Some(screen.name.clone()),
+                output: Some(self.screens[index].name.clone()),
                 source: None,
                 message,
             });
         }
-        if !fading && let Some(fade) = screen.fade.take() {
+        if !fading && let Some(fade) = self.screens[index].fade.take() {
             self.gl.delete(fade.before.texture);
         }
     }

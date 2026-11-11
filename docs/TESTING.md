@@ -1,7 +1,7 @@
 # Testing the review fixes
 
 Branch `fix/review-findings`, on top of v0.1.0 (`b9730e5`): the review fixes (`4e6cc5d`), then
-audio for scenes. It stays off
+audio for scenes. Branch `kde-plasma` adds KDE Plasma on top of it (items 9 and 10). They stay off
 `main` until it has run on the Linux machine. It builds with apolline-scene's
 `fix/review-findings`, whose own
 [docs/TESTING.md](https://github.com/Pisosenie/apolline-scene/blob/fix/review-findings/docs/TESTING.md)
@@ -9,7 +9,8 @@ covers the renderer.
 
 Checked so far:
 - `cargo test --workspace` passes on the Mac.
-- `cargo clippy --target x86_64-unknown-linux-gnu --all-targets` is clean, engine included.
+- `cargo clippy --target x86_64-unknown-linux-gnu --all-targets` is clean, engine included
+  (on `kde-plasma`, against PipeWire 1.6.9's headers).
 
 Nothing here has run on real hardware, and steamcmd only ran as the test stand-in.
 
@@ -112,9 +113,71 @@ To test the package instead:
      If a scene looks too quiet, too busy, or crowded at one end compared with Wallpaper Engine
      on Windows, say which. The numbers are at the top of `src/spectrum.rs`.
 
+9. **KDE Plasma 6.** Branch `kde-plasma`.
+   - **Before:** Plasma's desktop and the wallpaper both sat on the background layer. Whichever
+     mapped last was on top: either the wallpaper didn't show, or it covered the desktop and
+     took its clicks.
+   - **Now:** when `XDG_CURRENT_DESKTOP` names `KDE`, the wallpaper goes on the bottom layer,
+     over Plasma's desktop and under windows and panels, and clicks pass through it.
+   - **Check, in a Plasma 6 Wayland session:**
+     1. `systemctl --user start apolline-wall`, then `apolline-wall set <a video>`. It shows on
+        every monitor, under windows, and the panel stays on top.
+     2. Right-click the desktop: Plasma's desktop menu opens. Drag on the desktop: the selection
+        rectangle works, even though you can't see it under the wallpaper.
+     3. Restart plasmashell (`systemctl --user restart plasma-plasmashell`): the wallpaper stays
+        on top of the desktop.
+     4. Maximise a window over it, then make it fullscreen. GPU use should drop to near zero
+        once the wallpaper is covered.
+     5. Lock the screen and unlock: the wallpaper pauses and resumes.
+   - **Expected, not bugs:** desktop icons and widgets are hidden under the wallpaper; parallax
+     scenes don't follow the pointer.
+   - **If the wallpaper covers a panel or a window,** or still doesn't show, run
+     `echo $XDG_CURRENT_DESKTOP` in the session and inside `systemctl --user show-environment`,
+     and tell me both.
+
+10. **The Plasma wallpaper plugin.** Branch `kde-plasma`.
+    - **What it is:** `plasma/io.github.pisosenie.apolline-wall`, a Plasma 6 wallpaper type.
+      It runs `apolline-wall feed <connector>` and plays the PipeWire stream the daemon then
+      draws that monitor into, so Plasma's icons and widgets stay over the wallpaper.
+    - **Set up:**
+      1. Install the package built from this branch (see "Build and run": the PKGBUILD edit,
+         then `makepkg -si`). The plugin runs `apolline-wall` from plasmashell's `PATH`, so
+         `target/release` alone isn't enough.
+      2. The build now needs `clang` and PipeWire's headers (`libpipewire`, already on any
+         Plasma install).
+      3. Restart plasmashell once so it finds the new wallpaper type:
+         `systemctl --user restart plasma-plasmashell`.
+    - **Check:**
+      1. Right-click the desktop → Desktop and Wallpaper → Wallpaper type → **apolline-wall**,
+         Apply. Within about two seconds the monitor shows what `apolline-wall status` says it
+         shows, with desktop icons and widgets on top.
+      2. `apolline-wall status` lists a `feed` node for that monitor, and `pw-cli ls Node`
+         shows `apolline-wall.<connector>`.
+      3. `apolline-wall set <a video>`, then a shader, then a native scene: each one plays
+         in the plugin and crossfades as on other desktops.
+      4. Pause and resume the monitor: the picture holds, then moves on.
+      5. Do it for every monitor. One set to an ordinary Plasma wallpaper keeps the bottom
+         layer from item 9.
+      6. Switch the wallpaper type back to Image: Plasma's picture shows with its icons, and
+         nothing of ours covers it. `status` still lists the `feed` until the daemon restarts.
+      7. `systemctl --user restart apolline-wall` while the plugin shows: the picture comes
+         back within a few seconds on its own.
+      8. Change the monitor's resolution or scale: the picture comes back at the new size,
+         with the same `feed` node.
+      9. Maximise a window on that monitor: `apolline-wall status` says it's paused,
+         "Covered by a window", and GPU use drops. Restore the window, or press Show Desktop
+         (Meta+D): it plays again. A maximised window on another virtual desktop or
+         activity doesn't pause it. `apolline-wall policy --fullscreen false` turns this off.
+    - **Cost to watch:** frames are read back from the GPU, so expect more CPU and GPU than on
+      niri; note what `top` shows for `apolline-wall` and `plasmashell` with a 4K video. These
+      numbers decide whether the readback needs to change.
+    - **If it stays black:** run `apolline-wall feed <connector>` by hand and tell me what it
+      prints. Then run `journalctl --user -u plasma-plasmashell -b | grep -i -E 'pipewire|apolline'`
+      and tell me what that shows.
+
 ## Merging
 
 1. Once both branches check out, merge apolline-scene's into its `main` first.
-2. Then merge this one, and re-pin `packaging/arch/PKGBUILD` at the scene commit that's on
-   `main`.
+2. Then merge this one, then `kde-plasma`, and re-pin `packaging/arch/PKGBUILD` at the scene
+   commit that's on `main`.
 3. Push that.

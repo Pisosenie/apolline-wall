@@ -218,6 +218,7 @@ impl State {
             | Command::Step(_)
             | Command::Uniforms(_)
             | Command::Pause(_)
+            | Command::Feed(_)
             | Command::Status {} => false,
         }
     }

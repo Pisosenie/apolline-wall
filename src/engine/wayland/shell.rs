@@ -1,7 +1,9 @@
 //! Where a monitor's surface lives. Almost every compositor has wlr-layer-shell's background
-//! layer. GNOME has none, so there each monitor gets an ordinary window that apolline-wall's
-//! GNOME Shell extension moves behind everything; without the extension it would cover the
-//! desktop, so it isn't opened at all.
+//! layer. KWin has it too, but Plasma's desktop is an opaque surface on that same layer, so
+//! there the wallpaper goes one layer up, over Plasma's desktop and under every window, and
+//! lets clicks through to it. GNOME has no layer-shell, so there each monitor gets an ordinary
+//! window that apolline-wall's GNOME Shell extension moves behind everything; without the
+//! extension it would cover the desktop, so it isn't opened at all.
 
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
@@ -27,7 +29,7 @@ pub const GNOME_EXTENSION: &str = "apolline-wall@pisosenie.github.io";
 const APP_ID: &str = "apolline-wall";
 
 pub(super) enum Shells {
-    Layers(LayerShell),
+    Layers { shell: LayerShell, plasma: bool },
     Windows(XdgShell),
 }
 
@@ -46,10 +48,13 @@ impl Shell {
 }
 
 pub(super) fn bind(globals: &GlobalList, qh: &QueueHandle<App>) -> Result<Shells, String> {
-    if let Ok(layers) = LayerShell::bind(globals, qh) {
-        return Ok(Shells::Layers(layers));
+    if let Ok(shell) = LayerShell::bind(globals, qh) {
+        return Ok(Shells::Layers {
+            shell,
+            plasma: on_desktop("KDE"),
+        });
     }
-    if !on_gnome() {
+    if !on_desktop("GNOME") {
         return Err(
             "this compositor has no wlr-layer-shell, so there is no background layer to draw on"
                 .into(),
@@ -65,9 +70,14 @@ pub(super) fn bind(globals: &GlobalList, qh: &QueueHandle<App>) -> Result<Shells
         .map_err(|err| format!("xdg-shell: {err}"))
 }
 
-fn on_gnome() -> bool {
-    std::env::var("XDG_CURRENT_DESKTOP")
-        .is_ok_and(|desktops| desktops.split(':').any(|desktop| desktop == "GNOME"))
+fn on_desktop(name: &str) -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| listed(&desktops, name))
+}
+
+fn listed(desktops: &str, name: &str) -> bool {
+    desktops
+        .split(':')
+        .any(|desktop| desktop.eq_ignore_ascii_case(name))
 }
 
 fn extension_enabled() -> bool {
@@ -101,11 +111,20 @@ impl App {
             .and_then(|viewporter| viewporter.get().ok())
             .map(|viewporter| viewporter.get_viewport(&surface, qh, ()));
         let shell = match &wayland.shells {
-            Shells::Layers(layers) => {
-                let layer = layers.create_layer_surface(
+            Shells::Layers { shell, plasma } => {
+                let layer = if *plasma {
+                    // Clicks reach Plasma's desktop underneath, its menu and selection.
+                    if let Ok(region) = Region::new(&wayland.compositor) {
+                        surface.set_input_region(Some(region.wl_region()));
+                    }
+                    Layer::Bottom
+                } else {
+                    Layer::Background
+                };
+                let layer = shell.create_layer_surface(
                     qh,
                     surface,
-                    Layer::Background,
+                    layer,
                     Some("apolline-wallpaper"),
                     Some(output),
                 );
@@ -161,5 +180,20 @@ impl WindowHandler for App {
         if let Some(size) = size {
             self.configured(index, size);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listed;
+
+    #[test]
+    fn a_desktop_is_found_anywhere_in_the_list() {
+        assert!(listed("KDE", "KDE"));
+        assert!(listed("ubuntu:GNOME", "GNOME"));
+        assert!(listed("kde", "KDE"));
+        assert!(!listed("Hyprland", "KDE"));
+        assert!(!listed("", "GNOME"));
+        assert!(!listed("GNOME-Flashback:GNOME-Classic", "GNOME"));
     }
 }

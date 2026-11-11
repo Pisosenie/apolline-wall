@@ -28,8 +28,22 @@ pub enum Command {
     Limits(Limits),
     Uniforms(Uniforms),
     Adjust(Adjust),
+    Feed(Feed),
     /// Answered with a `status` event to whoever asked.
     Status {},
+}
+
+/// Plasma's wallpaper plugin asking for a monitor's frames as a PipeWire stream instead of a
+/// surface of its own. `status` gives the stream's node as the monitor's `feed`. The monitor
+/// stays fed until the daemon restarts; asking again only updates `covered`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Feed {
+    pub output: String,
+    /// Whether a maximized or fullscreen window hides Plasma's desktop there, as Plasma sees
+    /// it; it pauses the monitor like a fullscreen window does on X11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -242,6 +256,17 @@ pub struct Monitor {
     pub playlist_status: Option<crate::playlist::Status>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
+    /// Where its frames go while Plasma's wallpaper plugin shows them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<FeedStream>,
+}
+
+/// A monitor's PipeWire stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedStream {
+    pub node: u32,
+    /// Never the same for two streams, as node ids can be when PipeWire reuses them.
+    pub stream: u64,
 }
 
 pub const MAX_COMMAND_BYTES: usize = 2 * 1024 * 1024;
@@ -432,6 +457,29 @@ mod tests {
         assert!(parse(r#"{"lights":{"on":true}}"#).is_err());
         assert!(parse(r#"{"show":{"source":"/w/a.png","transition":10}}"#).is_err());
         assert!(parse("not json").unwrap_err().contains("not json"));
+    }
+
+    #[test]
+    fn a_feed_names_one_monitor() {
+        assert_eq!(
+            parse(r#"{"feed":{"output":"DP-1"}}"#),
+            Ok(Command::Feed(Feed {
+                output: "DP-1".into(),
+                covered: None,
+            }))
+        );
+        assert!(parse(r#"{"feed":{"output":"DP-1","covered":true}}"#).is_ok());
+        assert!(parse(r#"{"feed":{}}"#).is_err());
+        let monitor: Monitor =
+            serde_json::from_str(r#"{"name":"DP-1","paused":false,"feed":{"node":42,"stream":7}}"#)
+                .unwrap();
+        assert_eq!(
+            monitor.feed,
+            Some(FeedStream {
+                node: 42,
+                stream: 7
+            })
+        );
     }
 
     #[test]

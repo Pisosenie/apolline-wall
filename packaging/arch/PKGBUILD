@@ -7,7 +7,7 @@ pkgdesc='Live wallpapers for Wayland and X11: pictures, videos, shaders and Wall
 arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/apolline-wall'
 license=('MIT OR Apache-2.0')
-depends=('wayland' 'libglvnd' 'libxkbcommon' 'libgcc' 'glibc')
+depends=('wayland' 'libglvnd' 'libxkbcommon' 'libpipewire' 'libgcc' 'glibc')
 optdepends=(
   'mpv: video wallpapers'
   'libpulse: Wallpaper Engine scenes that move to music (parec)'
@@ -17,8 +17,9 @@ optdepends=(
   'linux-wallpaperengine-git: Wallpaper Engine scenes not drawn natively yet, and web wallpapers'
   'steamcmd: Workshop downloads without the Steam client'
   'libx11: X11 sessions, and GNOME without its extension through Xwayland'
+  'kpipewire: the KDE Plasma wallpaper plugin'
 )
-makedepends=('cargo' 'git')
+makedepends=('cargo' 'git' 'clang')
 provides=("$_name")
 conflicts=("$_name")
 # ring's and QuickJS's C parts come out of gcc as LTO objects, which rust's linker (lld) can't read.
@@ -61,6 +62,9 @@ package() {
   install -Dm644 tests/shaders/hills.frag "$pkgdir/usr/share/apolline-wall/wallpapers/hills.frag"
   local extension=apolline-wall@pisosenie.github.io
   install -Dm644 -t "$pkgdir/usr/share/gnome-shell/extensions/$extension" gnome/$extension/{metadata.json,extension.js}
+  local plugin=io.github.pisosenie.apolline-wall
+  install -Dm644 -t "$pkgdir/usr/share/plasma/wallpapers/$plugin" plasma/$plugin/metadata.json
+  install -Dm644 -t "$pkgdir/usr/share/plasma/wallpapers/$plugin/contents/ui" plasma/$plugin/contents/ui/*.qml
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
