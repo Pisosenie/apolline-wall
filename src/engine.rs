@@ -1,6 +1,10 @@
 mod audio;
 mod crashes;
 mod diagnostics;
+#[cfg(feature = "plasma")]
+mod feed;
+#[cfg(not(feature = "plasma"))]
+#[path = "engine/feed_off.rs"]
 mod feed;
 mod monitors;
 mod native;
@@ -236,7 +240,9 @@ struct App {
     /// What each project folder shown is, and when its `project.json` last changed.
     kinds: HashMap<PathBuf, (std::time::SystemTime, Kind)>,
     /// Plasma's wallpaper plugin's way in, once it has asked for a monitor.
+    #[cfg_attr(not(feature = "plasma"), allow(dead_code))]
     pipewire: Option<feed::Pipewire>,
+    #[cfg_attr(not(feature = "plasma"), allow(dead_code))]
     feed_changes: Sender<feed::Change>,
     mpv: Option<Rc<Mpv>>,
     wake: Ping,

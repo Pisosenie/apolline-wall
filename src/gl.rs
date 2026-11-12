@@ -118,6 +118,7 @@ pub struct Target {
 
 enum Kind {
     Window(Surface<WindowSurface>),
+    #[cfg_attr(not(feature = "plasma"), allow(dead_code))]
     Offscreen(Canvas),
 }
 
@@ -249,6 +250,7 @@ impl Gl {
         })
     }
 
+    #[cfg_attr(not(feature = "plasma"), allow(dead_code))]
     pub fn offscreen(&self, size: (u32, u32)) -> Result<Target, String> {
         Ok(Target {
             kind: Kind::Offscreen(self.canvas(size)?),
@@ -277,6 +279,7 @@ impl Gl {
     }
 
     /// The last frame drawn offscreen, top row first, as RGBA bytes into `into`.
+    #[cfg_attr(not(feature = "plasma"), allow(dead_code))]
     pub fn read_frame(&self, target: &Target, into: &mut [u8]) -> Result<(), String> {
         let Kind::Offscreen(canvas) = &target.kind else {
             return Err("only an offscreen frame can be read back".into());

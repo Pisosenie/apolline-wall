@@ -13,6 +13,12 @@ path = "src/main.rs"
 [workspace]
 members = ["protocol", "app"]
 
+[features]
+# The KDE Plasma wallpaper plugin's stream. Its PipeWire bindings need PipeWire 1.0's headers;
+# the Debian package for Ubuntu 22.04 leaves it out.
+default = ["plasma"]
+plasma = ["dep:pipewire"]
+
 [dependencies]
 apolline-scene = { path = "../apolline-scene" }
 apolline-wall-protocol = { path = "protocol" }
@@ -35,4 +41,4 @@ libc = "0.2"
 libloading = "0.8"
 x11rb = { version = "0.13", features = ["allow-unsafe-code", "dl-libxcb", "randr"] }
 x11-dl = "2"
-pipewire = { version = "0.10", features = ["v0_3_34"] }
+pipewire = { version = "0.10", features = ["v0_3_34"], optional = true }

@@ -14,8 +14,11 @@ case $(uname -m) in
     *) echo "no Debian name for $(uname -m)" >&2; exit 1 ;;
 esac
 target=${CARGO_TARGET_DIR:-$root/target}
+# PLASMA=no leaves out the KDE Plasma plugin, whose PipeWire bindings need PipeWire 1.0.
+plasma=${PLASMA:-yes}
+[ "$plasma" = no ] && features=--no-default-features || features=
 [ -x "$target/release/apolline-wall" ] && [ -x "$target/release/apolline-wallpapers" ] ||
-    cargo build --release --locked --workspace
+    cargo build --release --locked --workspace $features
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 pkg=$work/apolline-wall
@@ -30,7 +33,7 @@ for file in metadata.json extension.js; do
     install -Dm644 "gnome/$extension/$file" "$pkg/usr/share/gnome-shell/extensions/$extension/$file"
 done
 plugin=io.github.pisosenie.apolline-wall
-for file in metadata.json contents/ui/main.qml contents/ui/Covered.qml; do
+[ "$plasma" = no ] || for file in metadata.json contents/ui/main.qml contents/ui/Covered.qml; do
     install -Dm644 "plasma/$plugin/$file" "$pkg/usr/share/plasma/wallpapers/$plugin/$file"
 done
 install -Dm644 README.md "$pkg/usr/share/doc/apolline-wall/README.md"

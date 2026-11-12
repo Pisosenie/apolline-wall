@@ -108,7 +108,7 @@ It fetches apolline-scene at the commit it pins and builds without LTO on purpos
 | `vulkan-icd-loader` | faster drawing for the app |
 | `noto-fonts-cjk` | Chinese, Japanese and Korean titles in the Workshop |
 
-**Debian 12, Ubuntu 22.04 and newer**, amd64 or arm64: the `.deb` attached to each release, built and tested on Ubuntu by CI:
+**Debian 12, Ubuntu 22.04 and newer**, amd64 or arm64: the `.deb` attached to each release, built and tested on Ubuntu by CI. It leaves out the Plasma plugin: Ubuntu 22.04's PipeWire is older than the plugin needs, and has no Plasma 6 to plug into; build from source with `cargo build --release` on a newer system for it.
 
 ```sh
 sudo apt install ./apolline-wall_*.deb

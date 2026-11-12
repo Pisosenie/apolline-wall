@@ -32,7 +32,7 @@ jobs:
           git clone --quiet https://github.com/Pisosenie/apolline-scene.git
           git -C apolline-scene checkout --quiet "$commit"
       - name: Build dependencies
-        run: sudo apt-get update -q && sudo apt-get install -yq libwayland-dev pkg-config libpipewire-0.3-dev libspa-0.2-dev libclang-dev
+        run: sudo apt-get update -q && sudo apt-get install -yq libwayland-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -48,7 +48,7 @@ jobs:
         env:
           CARGO_TERM_COLOR: never
         run: |
-          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log
+          cargo clippy --workspace --all-targets --locked --no-default-features -- -D warnings 2>&1 | tee clippy.log
           status=${PIPESTATUS[0]}
           [ "$status" -eq 0 ] || { grep -m5 -A6 -E '^(error|warning)' clippy.log || tail -25 clippy.log; } | tr '\n' ' ' | sed 's/^/::error title=clippy::/'
           exit "$status"
@@ -57,13 +57,15 @@ jobs:
         env:
           CARGO_TERM_COLOR: never
         run: |
-          cargo test --workspace --locked 2>&1 | tee test.log
+          cargo test --workspace --locked --no-default-features 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           [ "$status" -eq 0 ] || { grep -m5 -A6 -E '^(error|failures:|thread .* panicked)' test.log || tail -25 test.log; } | tr '\n' ' ' | sed 's/^/::error title=test::/'
           exit "$status"
       - name: Debian package
         working-directory: apolline-wall
-        run: tools/package-deb.sh
+        # Ubuntu 22.04's PipeWire is 0.3, older than the Plasma plugin's bindings, and it has
+        # no Plasma 6 to plug into anyway.
+        run: PLASMA=no tools/package-deb.sh
       - uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.runner }}
