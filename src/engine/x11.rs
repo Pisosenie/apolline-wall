@@ -19,7 +19,7 @@ use smithay_client_toolkit::reexports::calloop::{
 use x11_dl::xlib::Xlib;
 use x11_dl::xlib_xcb::{XEventQueueOwner, Xlib_xcb};
 use x11rb::connection::Connection;
-use x11rb::properties::{WmSizeHints, WmSizeHintsSpecification};
+use x11rb::properties::{WmHints, WmSizeHints, WmSizeHintsSpecification};
 use x11rb::protocol::Event as XEvent;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
@@ -39,6 +39,7 @@ const CLASS: &[u8] = b"apolline-wall\0apolline-wall\0";
 
 x11rb::atom_manager! {
     Atoms: AtomsCookie {
+        _NET_SUPPORTED,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_DESKTOP,
         _NET_WM_STATE,
@@ -249,8 +250,13 @@ impl X11 {
         let (x, y) = monitor.position;
         let (width, height) = monitor.size;
         let atoms = &self.atoms;
+        // A window manager that knows no desktop windows, i3 for one, would tile or float it
+        // over everything: it's left out of the window manager's hands then, and kept at the
+        // bottom by its own stacking.
+        let unmanaged = !self.knows_desktops();
         let aux = CreateWindowAux::new()
             .background_pixel(0)
+            .override_redirect(u32::from(unmanaged))
             .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY);
         self.conn
             .create_window(
@@ -327,6 +333,12 @@ impl X11 {
         hints
             .set_normal_hints(&self.conn, id)
             .map_err(|err| fail(&err))?;
+        // A click on the desktop doesn't take the focus from the window that has it.
+        let input = WmHints {
+            input: Some(false),
+            ..WmHints::default()
+        };
+        input.set(&self.conn, id).map_err(|err| fail(&err))?;
         self.conn.map_window(id).map_err(|err| fail(&err))?;
         let window = Window {
             id,
@@ -336,6 +348,27 @@ impl X11 {
         self.place(&window).map_err(|err| fail(&err))?;
         self.flush();
         Ok(window)
+    }
+
+    /// Whether the window manager says it handles desktop windows, which stay under the rest.
+    fn knows_desktops(&self) -> bool {
+        self.conn
+            .get_property(
+                false,
+                self.root,
+                self.atoms._NET_SUPPORTED,
+                AtomEnum::ATOM,
+                0,
+                4096,
+            )
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| {
+                reply.value32().map(|mut atoms| {
+                    atoms.any(|atom| atom == self.atoms._NET_WM_WINDOW_TYPE_DESKTOP)
+                })
+            })
+            .unwrap_or(false)
     }
 
     fn place(&self, window: &Window) -> Result<(), x11rb::errors::ConnectionError> {
