@@ -15,6 +15,8 @@ pub(super) struct Rotation {
     deadline: Instant,
     suspended: bool,
     failed: HashSet<PathBuf>,
+    /// The folder couldn't be read at the last look.
+    unreadable: bool,
 }
 
 impl Rotation {
@@ -62,23 +64,54 @@ impl Rotation {
     }
 
     /// A folder playlist's wallpapers as the folder holds them now: the one showing keeps
-    /// its place, and if it's gone the next step goes to what came after it.
-    fn rescan(&mut self) -> Result<(), String> {
+    /// its place, and if it's gone the next step goes to what came after it. Says whether it
+    /// went.
+    fn rescan(&mut self) -> Result<bool, String> {
         let Some(folder) = &self.list.folder else {
-            return Ok(());
+            return Ok(false);
         };
-        let found = filled(folder)?;
-        let current = &self.list.sources[self.index];
-        self.index = match found.iter().position(|path| path == current) {
-            Some(index) => index,
-            None => {
-                let after = found.partition_point(|path| order(path) < order(current));
-                (after + found.len() - 1) % found.len()
+        let found = match filled(folder) {
+            Ok(found) => found,
+            Err(message) => {
+                self.unreadable = true;
+                return Err(message);
             }
         };
+        // Back after it couldn't be read: what failed then, failed for being out of reach.
+        if std::mem::take(&mut self.unreadable) {
+            self.failed.clear();
+        }
+        let current = &self.list.sources[self.index];
+        let (index, gone) = match found.iter().position(|path| path == current) {
+            Some(index) => (index, false),
+            None => {
+                let after = found.partition_point(|path| order(path) < order(current));
+                ((after + found.len() - 1) % found.len(), true)
+            }
+        };
+        self.index = index;
         self.failed.retain(|path| found.contains(path));
         self.list.sources = found;
-        Ok(())
+        Ok(gone)
+    }
+
+    /// The next step, after the folder is read again: one whose wallpaper left the folder
+    /// shows something else even when what's left is a single one.
+    fn step(&mut self, previous: bool) -> Result<bool, String> {
+        let gone = self.rescan();
+        // Back from a gone wallpaper is the one that came before it, where the rescan left
+        // the place.
+        match gone {
+            Ok(true) if previous && !self.failed.contains(&self.list.sources[self.index]) => {
+                Ok(true)
+            }
+            Ok(true) => {
+                self.advance(previous);
+                Ok(true)
+            }
+            Ok(false) => Ok(self.advance(previous)),
+            Err(message) => Err(message),
+        }
     }
 
     fn advance(&mut self, previous: bool) -> bool {
@@ -198,6 +231,7 @@ impl App {
                     index,
                     suspended: false,
                     failed: HashSet::new(),
+                    unreadable: false,
                 },
             );
             self.show_rotation(&key);
@@ -256,14 +290,17 @@ impl App {
             return;
         };
         // An unreadable folder keeps playing what it held last.
-        if let Err(message) = rotation.rescan() {
-            protocol::emit(&Event::Error {
-                output: key.clone(),
-                source: rotation.list.folder.clone(),
-                message,
-            });
-        }
-        let changed = rotation.advance(previous);
+        let changed = match rotation.step(previous) {
+            Ok(changed) => changed,
+            Err(message) => {
+                protocol::emit(&Event::Error {
+                    output: key.clone(),
+                    source: rotation.list.folder.clone(),
+                    message,
+                });
+                rotation.advance(previous)
+            }
+        };
         rotation.deadline = Instant::now() + Duration::from_secs(rotation.list.interval_secs);
         if changed {
             self.show_rotation(&key);
@@ -380,6 +417,7 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(300),
             suspended: false,
             failed: HashSet::new(),
+            unreadable: false,
         }
     }
 
@@ -459,6 +497,44 @@ mod tests {
         std::fs::remove_dir_all(&folder).unwrap();
         assert!(rotation.rescan().is_err());
         assert_eq!(rotation.list.sources.len(), 2);
+        // What failed while the folder was away gets another go once it's back.
+        rotation.failed.insert(folder.join("a.jpg"));
+        std::fs::create_dir_all(&folder).unwrap();
+        for name in ["a.jpg", "b.jpg"] {
+            std::fs::write(folder.join(name), b"").unwrap();
+        }
+        rotation.rescan().unwrap();
+        assert!(rotation.failed.is_empty());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_shown_wallpaper_gone_from_the_folder_gives_way_even_to_a_single_one() {
+        let folder =
+            std::env::temp_dir().join(format!("wall-rotation-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        for name in ["a.jpg", "b.jpg"] {
+            std::fs::write(folder.join(name), b"").unwrap();
+        }
+        let mut rotation = rotation();
+        rotation.list.folder = Some(folder.clone());
+        rotation.list.sources = folder_sources(&folder).unwrap();
+        rotation.index = 0;
+        std::fs::remove_file(folder.join("a.jpg")).unwrap();
+        assert_eq!(rotation.step(false), Ok(true));
+        assert_eq!(rotation.list.sources[rotation.index], folder.join("b.jpg"));
+        // Nothing left the folder: one wallpaper stays where it is.
+        assert_eq!(rotation.step(false), Ok(false));
+        std::fs::write(folder.join("c.jpg"), b"").unwrap();
+        rotation.rescan().unwrap();
+        rotation.index = 1;
+        std::fs::remove_file(folder.join("c.jpg")).unwrap();
+        std::fs::write(folder.join("d.jpg"), b"").unwrap();
+        // Back from a gone one is the one before it.
+        assert_eq!(rotation.step(true), Ok(true));
+        assert_eq!(rotation.list.sources[rotation.index], folder.join("b.jpg"));
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]

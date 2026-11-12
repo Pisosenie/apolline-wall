@@ -65,12 +65,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let list = Command::Playlist(protocol::Playlist {
                 output: options.get("output"),
                 sources: Vec::new(),
-                folder: Some(folder),
+                folder: Some(folder.clone()),
                 settings: Default::default(),
                 interval_secs: options.number("every")?.unwrap_or(300),
                 fit: fit(&options)?,
             });
             protocol::parse(&protocol::line(&list))?;
+            // The daemon refuses an empty one too, but only in its log.
+            if apolline_wall_protocol::playlist::folder_sources(&folder)?.is_empty() {
+                return Err(format!(
+                    "{path} has no pictures, videos, shaders or Wallpaper Engine projects"
+                ));
+            }
             send(&list)
         }
         "next" | "previous" => {
@@ -478,6 +484,11 @@ mod tests {
         let refused = run(&args(&format!("playlist {}", file.display()))).unwrap_err();
         std::fs::remove_file(&file).unwrap();
         assert!(refused.contains("isn't a folder"));
+        let empty = std::env::temp_dir().join(format!("wall-cli-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let refused = run(&args(&format!("playlist {}", empty.display()))).unwrap_err();
+        std::fs::remove_dir(&empty).unwrap();
+        assert!(refused.contains("has no pictures"));
         let here = std::env::temp_dir();
         let slow = format!("playlist {} --every 5", here.display());
         assert!(run(&args(&slow)).unwrap_err().contains("10–86400"));
