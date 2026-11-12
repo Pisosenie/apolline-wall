@@ -140,11 +140,11 @@ impl State {
                 let key = list.output.clone().unwrap_or_default();
                 if list.output.is_none() {
                     self.playlists.clear();
-                    if !list.sources.is_empty() {
+                    if !list.stops() {
                         self.outputs.clear();
                     }
                 }
-                if list.sources.is_empty() {
+                if list.stops() {
                     self.playlists.remove(&key);
                 } else {
                     if let Some(saved) = self.outputs.get_mut(&key) {
@@ -652,6 +652,7 @@ mod tests {
         let list = protocol::Playlist {
             output: Some("DP-1".into()),
             sources: vec!["/w/a.jpg".into(), "/w/b.jpg".into()],
+            folder: None,
             settings: BTreeMap::from([(
                 "/w/a.jpg".into(),
                 apolline_wall_protocol::playlist::Settings {

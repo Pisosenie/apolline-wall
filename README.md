@@ -205,7 +205,13 @@ In the app, filter the library to what you want, pick a monitor or all of them, 
 apolline-wall next            # also previous, stop-playlist; each takes --output NAME
 ```
 
-To start one without the app, send the `playlist` command to the socket:
+Or play a folder: whatever pictures, videos, shaders and Wallpaper Engine project folders it holds, in name order. It is read again at every step, so files you add join and files you remove leave, and the one showing keeps its place:
+
+```sh
+apolline-wall playlist ~/Pictures/Walls --every 600 --output DP-1   # --fit too; every 300 s by default
+```
+
+To start a list of your own without the app, send the `playlist` command to the socket:
 
 ```sh
 echo '{"playlist":{"sources":["/home/me/Videos/a.mp4","/home/me/Pictures/b.jpg"],"interval_secs":600}}' \
@@ -287,7 +293,7 @@ The daemon listens on `$XDG_RUNTIME_DIR/apolline-wall/control.sock`: one JSON co
 | `{"limits":{"fps":30,"scale":0.5}}` | frames per second (1–240) and share of resolution (0.1–1) for shaders and scenes; either can be left out |
 | `{"uniforms":{"accent":"#86bdf0"}}` | the shell's accent, which shaders read as `iAccent` |
 | `{"adjust":{"look":{"brightness":-0.2,"contrast":1,"saturation":1,"flip":false,"speed":1},"draft":true}}` | the look of what is shown now; fields left out keep their defaults; `"output"` for one monitor; a draft shows but isn't remembered |
-| `{"playlist":{"sources":[...],"interval_secs":600}}` | rotate through absolute paths every 10–86400 s; also `"output"`, `"fit"`, `"settings"`; empty `sources` stops it |
+| `{"playlist":{"sources":[...],"interval_secs":600}}` | rotate through absolute paths every 10–86400 s; also `"output"`, `"fit"`, `"settings"`; or `"folder"` instead of `"sources"` for what a folder holds, read again at every step; empty `sources` and no folder stops it |
 | `{"step":{"previous":false}}` | next or previous entry; `"output"` for one monitor, otherwise every active playlist once |
 | `{"policy":{...}}` | `pause_on_lock`, `pause_on_sleep`, `pause_on_fullscreen`, `battery` (`keep`/`reduce`/`pause`), `battery_fps`, `battery_scale` |
 | `{"session":{"locked":true}}` | the shell's lock state, for shells that don't update logind |

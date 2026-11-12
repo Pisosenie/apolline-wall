@@ -67,7 +67,11 @@ pub struct Show {
 pub struct Playlist {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    #[serde(default)]
     pub sources: Vec<PathBuf>,
+    /// Plays what this folder holds instead of `sources`, read again at every step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub settings: std::collections::BTreeMap<PathBuf, crate::playlist::Settings>,
     pub interval_secs: u64,

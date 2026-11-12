@@ -75,6 +75,7 @@ async fn serve() -> Result<(), String> {
                 daemon::send(Command::Playlist(Playlist {
                     output: Some(output),
                     sources: Vec::new(),
+                    folder: None,
                     settings: Default::default(),
                     interval_secs: 300,
                     fit: Default::default(),

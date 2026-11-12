@@ -327,6 +327,7 @@ impl App {
                         output: self.target.clone(),
                         settings: self.config.playlist_settings(&sources),
                         sources,
+                        folder: None,
                         interval_secs: u64::from(self.config.rotation_minutes.clamp(1, 60)) * 60,
                         fit: self.fit,
                     },
@@ -342,6 +343,7 @@ impl App {
                 apolline_wall_protocol::protocol::Playlist {
                     output: Some(output),
                     sources: Vec::new(),
+                    folder: None,
                     settings: Default::default(),
                     interval_secs: 300,
                     fit: self.fit,

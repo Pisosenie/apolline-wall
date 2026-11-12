@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 
+use apolline_wall_protocol::playlist::{folder_sources, order};
+
 use super::App;
 use crate::protocol::{self, Event, Playlist, Show, Step};
 
@@ -42,9 +44,13 @@ impl Rotation {
             .count()
     }
 
+    /// A folder always might: what was added to it joins at the next step.
     fn needs_step(&self) -> bool {
         let available = self.available();
-        available > 1 || (available == 1 && self.failed.contains(&self.list.sources[self.index]))
+        available > 1
+            || (available == 1
+                && (self.list.folder.is_some()
+                    || self.failed.contains(&self.list.sources[self.index])))
     }
 
     fn fail(&mut self, source: &Path) -> bool {
@@ -53,6 +59,26 @@ impl Rotation {
         }
         self.deadline = Instant::now();
         true
+    }
+
+    /// A folder playlist's wallpapers as the folder holds them now: the one showing keeps
+    /// its place, and if it's gone the next step goes to what came after it.
+    fn rescan(&mut self) -> Result<(), String> {
+        let Some(folder) = &self.list.folder else {
+            return Ok(());
+        };
+        let found = filled(folder)?;
+        let current = &self.list.sources[self.index];
+        self.index = match found.iter().position(|path| path == current) {
+            Some(index) => index,
+            None => {
+                let after = found.partition_point(|path| order(path) < order(current));
+                (after + found.len() - 1) % found.len()
+            }
+        };
+        self.failed.retain(|path| found.contains(path));
+        self.list.sources = found;
+        Ok(())
     }
 
     fn advance(&mut self, previous: bool) -> bool {
@@ -120,6 +146,18 @@ impl App {
     }
 
     pub(super) fn playlist(&mut self, mut list: Playlist) {
+        if let Some(folder) = &list.folder {
+            match filled(folder) {
+                Ok(found) => list.sources = found,
+                Err(message) => {
+                    return protocol::emit(&Event::Error {
+                        output: list.output.clone(),
+                        source: Some(folder.clone()),
+                        message,
+                    });
+                }
+            }
+        }
         let mut seen = HashSet::new();
         list.sources.retain(|source| seen.insert(source.clone()));
         if list.sources.is_empty() {
@@ -217,6 +255,14 @@ impl App {
         let Some(rotation) = self.rotations.get_mut(&key) else {
             return;
         };
+        // An unreadable folder keeps playing what it held last.
+        if let Err(message) = rotation.rescan() {
+            protocol::emit(&Event::Error {
+                output: key.clone(),
+                source: rotation.list.folder.clone(),
+                message,
+            });
+        }
         let changed = rotation.advance(previous);
         rotation.deadline = Instant::now() + Duration::from_secs(rotation.list.interval_secs);
         if changed {
@@ -304,6 +350,18 @@ impl App {
     }
 }
 
+/// A folder's wallpapers, at least one.
+fn filled(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let found = folder_sources(folder)?;
+    if found.is_empty() {
+        return Err(format!(
+            "{} has no pictures, videos, shaders or Wallpaper Engine projects",
+            folder.display()
+        ));
+    }
+    Ok(found)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +371,7 @@ mod tests {
             list: Playlist {
                 output: None,
                 sources: ["a", "b", "c"].map(PathBuf::from).to_vec(),
+                folder: None,
                 settings: Default::default(),
                 interval_secs: 300,
                 fit: crate::protocol::Fit::Cover,
@@ -372,6 +431,34 @@ mod tests {
         assert!(!rotation.fail(Path::new("a")));
         assert_eq!(rotation.available(), 2);
         assert!(rotation.deadline <= Instant::now());
+    }
+
+    #[test]
+    fn a_folder_rescan_keeps_the_place_of_what_shows() {
+        let folder = std::env::temp_dir().join(format!("wall-rotation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        for name in ["a.jpg", "c.jpg", "e.jpg"] {
+            std::fs::write(folder.join(name), b"").unwrap();
+        }
+        let mut rotation = rotation();
+        rotation.list.folder = Some(folder.clone());
+        rotation.list.sources = folder_sources(&folder).unwrap();
+        rotation.index = 1;
+        rotation.failed.insert(folder.join("e.jpg"));
+        std::fs::write(folder.join("b.jpg"), b"").unwrap();
+        rotation.rescan().unwrap();
+        assert_eq!(rotation.list.sources[rotation.index], folder.join("c.jpg"));
+        assert_eq!(rotation.list.sources.len(), 4);
+        std::fs::remove_file(folder.join("c.jpg")).unwrap();
+        std::fs::remove_file(folder.join("e.jpg")).unwrap();
+        rotation.rescan().unwrap();
+        assert!(rotation.failed.is_empty());
+        assert!(rotation.advance(false));
+        assert_eq!(rotation.list.sources[rotation.index], folder.join("a.jpg"));
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert!(rotation.rescan().is_err());
+        assert_eq!(rotation.list.sources.len(), 2);
     }
 
     #[test]

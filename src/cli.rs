@@ -13,6 +13,8 @@ usage:
   apolline-wall pause [--output NAME]
   apolline-wall resume [--output NAME]
   apolline-wall limits [--fps 1-240] [--scale 0.1-1]
+  apolline-wall playlist FOLDER [--output NAME] [--every SECONDS] [--fit cover|contain|blur]
+                                            play what a folder holds, reread at every step
   apolline-wall next|previous [--output NAME]
   apolline-wall stop-playlist [--output NAME]
   apolline-wall policy [--battery keep|reduce|pause] [--lock true|false] [--sleep true|false] [--fullscreen true|false]
@@ -53,6 +55,24 @@ pub fn run(args: &[String]) -> Result<(), String> {
             protocol::parse(&protocol::line(&limits))?;
             send(&limits)
         }
+        "playlist" => {
+            options.only(&["output", "every", "fit"])?;
+            let path = options.path.as_deref().ok_or("playlist needs a folder")?;
+            let folder = std::fs::canonicalize(path).map_err(|err| format!("{path}: {err}"))?;
+            if !folder.is_dir() {
+                return Err(format!("{path} isn't a folder"));
+            }
+            let list = Command::Playlist(protocol::Playlist {
+                output: options.get("output"),
+                sources: Vec::new(),
+                folder: Some(folder),
+                settings: Default::default(),
+                interval_secs: options.number("every")?.unwrap_or(300),
+                fit: fit(&options)?,
+            });
+            protocol::parse(&protocol::line(&list))?;
+            send(&list)
+        }
         "next" | "previous" => {
             options.only(&["output"])?;
             options.no_path()?;
@@ -67,6 +87,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             send(&Command::Playlist(protocol::Playlist {
                 output: options.get("output"),
                 sources: Vec::new(),
+                folder: None,
                 settings: Default::default(),
                 interval_secs: 300,
                 fit: Fit::Cover,
@@ -196,12 +217,7 @@ impl Options {
 fn set(options: &Options) -> Result<(), String> {
     let path = options.path.as_deref().ok_or(USAGE)?;
     let source = std::fs::canonicalize(path).map_err(|err| format!("{path}: {err}"))?;
-    let fit = match options.get("fit").as_deref() {
-        None | Some("cover") => Fit::Cover,
-        Some("contain") => Fit::Contain,
-        Some("blur") => Fit::Blur,
-        Some(other) => return Err(format!("--fit is cover, contain or blur, not {other}")),
-    };
+    let fit = fit(options)?;
     let output = options.get("output");
     let mut stream = connect()?;
     let Event::Status { outputs, .. } = status(&mut stream)? else {
@@ -297,6 +313,15 @@ fn status(stream: &mut UnixStream) -> Result<Event, String> {
         }
     }
     Err("apolline-wall didn't answer".into())
+}
+
+fn fit(options: &Options) -> Result<Fit, String> {
+    match options.get("fit").as_deref() {
+        None | Some("cover") => Ok(Fit::Cover),
+        Some("contain") => Ok(Fit::Contain),
+        Some("blur") => Ok(Fit::Blur),
+        Some(other) => Err(format!("--fit is cover, contain or blur, not {other}")),
+    }
 }
 
 /// The node `output`'s frames go to, and which stream it is. The stream takes a moment to
@@ -438,6 +463,24 @@ mod tests {
         );
         assert!(run(&args("dance")).unwrap_err().contains("unknown command"));
         assert!(run(&args("feed")).unwrap_err().contains("monitor's name"));
+        assert!(
+            run(&args("playlist"))
+                .unwrap_err()
+                .contains("needs a folder")
+        );
+        assert!(
+            run(&args("playlist /nowhere/wallpapers"))
+                .unwrap_err()
+                .contains("/nowhere/wallpapers")
+        );
+        let file = std::env::temp_dir().join(format!("wall-cli-{}.jpg", std::process::id()));
+        std::fs::write(&file, b"").unwrap();
+        let refused = run(&args(&format!("playlist {}", file.display()))).unwrap_err();
+        std::fs::remove_file(&file).unwrap();
+        assert!(refused.contains("isn't a folder"));
+        let here = std::env::temp_dir();
+        let slow = format!("playlist {} --every 5", here.display());
+        assert!(run(&args(&slow)).unwrap_err().contains("10–86400"));
     }
 
     #[test]

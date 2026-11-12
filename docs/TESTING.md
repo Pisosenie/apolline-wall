@@ -1,7 +1,8 @@
 # Testing the review fixes
 
 Branch `fix/review-findings`, on top of v0.1.0 (`b9730e5`): the review fixes (`4e6cc5d`), then
-audio for scenes. Branch `kde-plasma` adds KDE Plasma on top of it (items 9 and 10). They stay off
+audio for scenes. Branch `kde-plasma` adds KDE Plasma on top of it (items 9 and 10), and `playlist-folders` a
+folder as a playlist on top of that (item 11). They stay off
 `main` until it has run on the Linux machine. It builds with apolline-scene's
 `fix/review-findings`, whose own
 [docs/TESTING.md](https://github.com/Pisosenie/apolline-scene/blob/fix/review-findings/docs/TESTING.md)
@@ -175,9 +176,29 @@ To test the package instead:
       prints. Then run `journalctl --user -u plasma-plasmashell -b | grep -i -E 'pipewire|apolline'`
       and tell me what that shows.
 
+11. **A folder as a playlist.** Branch `playlist-folders`.
+    - **Now:** `apolline-wall playlist FOLDER [--output NAME] [--every SECONDS] [--fit …]` plays
+      what the folder holds: pictures, videos, shaders and Wallpaper Engine project folders, in
+      name order, hidden files left out. The folder is read again before every step.
+    - **Check:**
+      1. `mkdir /tmp/walls`, copy in three pictures and a video, then
+         `apolline-wall playlist /tmp/walls --every 10`. They come one after another, in name
+         order, and `apolline-wall status` says `Playlist 1/4`.
+      2. Copy in a fifth file whose name sorts before the one showing: the one showing stays,
+         `status` says 5 in all, and the new one comes in its turn.
+      3. Delete the one showing: the next step goes to what came after it.
+      4. Leave one file only: it still steps every 10 s without flicker, and a file copied in
+         then joins.
+      5. Rename the folder away: the log says it can't be read, and the playlist keeps playing
+         what it had. Rename it back: it carries on from the folder.
+      6. `systemctl --user restart apolline-wall`: the folder playlist comes back, reading the
+         folder afresh.
+      7. `apolline-wall stop-playlist` stops it. An empty folder is refused with a message.
+    - **Not yet:** the app has no button for it.
+
 ## Merging
 
 1. Once both branches check out, merge apolline-scene's into its `main` first.
-2. Then merge this one, then `kde-plasma`, and re-pin `packaging/arch/PKGBUILD` at the scene
+2. Then merge this one, then `kde-plasma`, then `playlist-folders`, and re-pin `packaging/arch/PKGBUILD` at the scene
    commit that's on `main`.
 3. Push that.
