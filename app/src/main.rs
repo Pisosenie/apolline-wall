@@ -8,6 +8,7 @@ mod presets;
 mod preview;
 mod properties;
 mod report;
+mod rotation;
 mod steamcmd;
 mod style;
 #[cfg(target_os = "linux")]
@@ -152,6 +153,7 @@ pub enum Message {
     Apply,
     Favorite(PathBuf),
     Rotate,
+    RotateFolder(PathBuf),
     RotationInterval(u32),
     Step(String, bool),
     StopPlaylist(String),
@@ -312,43 +314,15 @@ impl App {
                 self.notice = config::save(&self.config).err();
                 Task::none()
             }
-            Message::Rotate => {
-                let sources = self
-                    .visible()
-                    .into_iter()
-                    .filter(|item| item.what.missing().is_none())
-                    .map(|item| item.path.clone())
-                    .collect::<Vec<_>>();
-                if sources.is_empty() {
-                    return Task::none();
-                }
-                self.ask(Command::Playlist(
-                    apolline_wall_protocol::protocol::Playlist {
-                        output: self.target.clone(),
-                        settings: self.config.playlist_settings(&sources),
-                        sources,
-                        folder: None,
-                        interval_secs: u64::from(self.config.rotation_minutes.clamp(1, 60)) * 60,
-                        fit: self.fit,
-                    },
-                ))
-            }
+            Message::Rotate => self.rotate(),
+            Message::RotateFolder(folder) => self.rotate_folder(folder),
             Message::Step(output, previous) => {
                 self.ask(Command::Step(apolline_wall_protocol::protocol::Step {
                     output: Some(output),
                     previous,
                 }))
             }
-            Message::StopPlaylist(output) => self.ask(Command::Playlist(
-                apolline_wall_protocol::protocol::Playlist {
-                    output: Some(output),
-                    sources: Vec::new(),
-                    folder: None,
-                    settings: Default::default(),
-                    interval_secs: 300,
-                    fit: self.fit,
-                },
-            )),
+            Message::StopPlaylist(output) => self.stop_playlist(output),
             Message::Look(tweak) => {
                 match tweak {
                     Tweak::Brightness(value) => self.look.brightness = value,

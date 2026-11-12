@@ -334,6 +334,23 @@ fn inspector(app: &App) -> Element<'_, Message> {
         .style(style::secondary)
         .on_press_maybe(app.daemon.as_ref().map(|_| Message::Rotate)),
     );
+    if let Some(folder) = app.folder_of(&item.path) {
+        details = details.push(
+            button(text(format!("Rotate {}", config::tilde(&folder))).size(13))
+                .padding([6, 12])
+                .style(style::secondary)
+                .on_press_maybe(
+                    app.daemon
+                        .as_ref()
+                        .map(|_| Message::RotateFolder(folder.clone())),
+                ),
+        );
+        details = details.push(
+            text("The whole folder, in name order. Files added to it later join.")
+                .size(11)
+                .color(style::FAINT),
+        );
+    }
     details = details.push(
         text("Uses saved wallpaper settings. Apply edits before starting rotation.")
             .size(11)

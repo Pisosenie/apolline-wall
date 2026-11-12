@@ -194,7 +194,10 @@ To test the package instead:
       6. `systemctl --user restart apolline-wall`: the folder playlist comes back, reading the
          folder afresh.
       7. `apolline-wall stop-playlist` stops it. An empty folder is refused with a message.
-    - **Not yet:** the app has no button for it.
+      8. In the app, pick a picture from `~/Pictures/Wallpapers` (or a folder added in
+         Settings): the inspector offers **Rotate ~/Pictures/Wallpapers**, and pressing it
+         starts the same playlist on the monitor chosen under "Show on", at the interval on
+         the slider. A Workshop wallpaper offers no such button.
 
 ## Merging
 
