@@ -10,9 +10,14 @@ on:
 permissions:
   contents: write
 
+# Plain text, so the errors can be picked out of the log.
+env:
+  CARGO_TERM_COLOR: never
+
 jobs:
   ubuntu:
     strategy:
+      fail-fast: false
       matrix:
         # The oldest Ubuntu supported, so the package runs on any glibc from 2022 on.
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
@@ -43,14 +48,14 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log
           status=${PIPESTATUS[0]}
-          [ "$status" -eq 0 ] || grep -m5 -A3 -E '^(error|warning)' clippy.log | tr '\n' ' ' | sed 's/^/::error title=clippy::/'
+          [ "$status" -eq 0 ] || { grep -m5 -A6 -E '^(error|warning)' clippy.log || tail -25 clippy.log; } | tr '\n' ' ' | sed 's/^/::error title=clippy::/'
           exit "$status"
       - name: Test
         working-directory: apolline-wall
         run: |
           cargo test --workspace --locked 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
-          [ "$status" -eq 0 ] || grep -m5 -A3 -E '^(error|failures:|thread .* panicked)' test.log | tr '\n' ' ' | sed 's/^/::error title=test::/'
+          [ "$status" -eq 0 ] || { grep -m5 -A6 -E '^(error|failures:|thread .* panicked)' test.log || tail -25 test.log; } | tr '\n' ' ' | sed 's/^/::error title=test::/'
           exit "$status"
       - name: Debian package
         working-directory: apolline-wall
