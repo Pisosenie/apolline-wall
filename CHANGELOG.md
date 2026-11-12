@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — 2026-11-12
+
+- **A folder as a playlist**: `apolline-wall playlist FOLDER --every SECONDS` plays what a folder holds, read again before every step, so what's added joins and what's gone is skipped; the app offers to rotate a library folder from its inspector.
+- **Scenes hear the music**: audio-reactive Wallpaper Engine scenes get what's playing, through `parec`, in 64 bands a side.
+- **KDE Plasma 6**: a wallpaper plugin plays each monitor from a PipeWire stream under Plasma's icons and widgets, and monitors without it get the wallpaper on the bottom layer. The Debian package for Ubuntu 22.04 leaves the plugin out: its PipeWire is too old.
+- A paused monitor stops drawing a scene the others still show; a scene's canvas is only the part its monitors show, so a portrait monitor stays sharp; canvases shrink when a monitor leaves.
+- Project folders are read again only when they change; a poster that can't be saved falls back to the video file; steamcmd signs in from a private script, so the account name isn't on its command line.
+- Built against apolline-scene 0.2.0: bigger scenes load, timelines on particle overrides play.
+
 ## 0.1.0 — 2026-11-07
 
 The first release: live wallpapers for Linux, and the wallpaper process of Apolline.

@@ -137,7 +137,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apolline-scene"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "glow",
@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "apolline-wall"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "apolline-scene",
  "apolline-wall-protocol",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "apolline-wall-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "apolline-wallpapers"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "apolline-scene",
  "apolline-wall-protocol",
