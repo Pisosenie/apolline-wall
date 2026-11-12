@@ -34,12 +34,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apolline-wall
-      - name: Format, lint and test
+      # Each on its own, and the first errors as annotations, which show without signing in.
+      - name: Format
+        working-directory: apolline-wall
+        run: cargo fmt --all --check
+      - name: Lint
         working-directory: apolline-wall
         run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log
+          status=${PIPESTATUS[0]}
+          [ "$status" -eq 0 ] || grep -m5 -A3 -E '^(error|warning)' clippy.log | tr '\n' ' ' | sed 's/^/::error title=clippy::/'
+          exit "$status"
+      - name: Test
+        working-directory: apolline-wall
+        run: |
+          cargo test --workspace --locked 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          [ "$status" -eq 0 ] || grep -m5 -A3 -E '^(error|failures:|thread .* panicked)' test.log | tr '\n' ' ' | sed 's/^/::error title=test::/'
+          exit "$status"
       - name: Debian package
         working-directory: apolline-wall
         run: tools/package-deb.sh
