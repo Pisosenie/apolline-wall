@@ -23,7 +23,7 @@ apolline-wall puts moving wallpapers on a Linux desktop the way Wallpaper Engine
 | **Wallpaper Engine** | videos and scenes from your Workshop subscriptions; scenes natively, web wallpapers and the rest through [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) |
 | **Per monitor** | its own wallpaper, fit (cover, contain, blur), look and playlist, following the monitor across ports |
 | **When unseen** | paused on lock, before sleep, optionally on battery; no timers or decoding while nothing is visible |
-| **Desktops** | niri, Hyprland, sway, river, labwc, Wayfire, COSMIC; KDE Plasma 6, GNOME 45–49 and X11 sessions written but not yet run on real hardware |
+| **Desktops** | niri, sway, labwc, Hyprland, river, Wayfire, COSMIC; X11 with openbox, i3 and other window managers; KDE Plasma 6 and GNOME 45–49 written but not yet run |
 | **Ways in** | `apolline-wall` CLI, the `apolline-wallpapers` app and tray, JSON lines over a socket, or Apolline's Settings |
 
 ## Quick start
@@ -396,9 +396,9 @@ CI formats, lints with `clippy -D warnings` and tests on Ubuntu 22.04, x86_64 an
 
 ## What is stable
 
-Run on real hardware (Arch, niri, an NVIDIA RTX 4070 Ti, two monitors, one turned): pictures, videos, shaders, native scenes and Apolline's integration. The app's playlist controls and tray are compiled and unit-tested, but their layout still needs a graphical check.
+Run on real hardware (Arch, niri, an NVIDIA RTX 4070 Ti, two monitors, one turned): pictures, videos, shaders, native scenes, Workshop videos, folder playlists, pausing one monitor of a shared scene, `parec` for scenes that listen, and Apolline's integration. On the same machine, in sway and labwc (headless, two outputs, one turned) and in X11 sessions under openbox and i3 (Xephyr, one and two monitors): pictures, videos, shaders and scenes draw, fit, pause and play folders, and on X11 the wallpaper stays under every window, takes no focus and pauses under a fullscreen window. The app opens and drives the daemon under X11 too.
 
-Written and tested only against stand-ins or synthetic input so far: GNOME through the extension, X11 sessions, real `steamcmd` downloads, linux-wallpaperengine as the fallback, real sleep, lock and battery transitions, X11 fullscreen pause, and Mesa (AMD and Intel) on real Workshop scenes. Audio for scenes is written but not yet run. KDE Plasma is written but not yet run. Not done: Fedora and Flatpak packages. Reports are welcome; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the plan and [`docs/STATUS.md`](docs/STATUS.md) where things stand.
+Written and tested only against stand-ins or synthetic input so far: GNOME through the extension, real `steamcmd` downloads, linux-wallpaperengine as the fallback, real sleep and battery transitions, and Mesa (AMD and Intel) on real Workshop scenes. KDE Plasma is written but not yet run, and how scenes move to music hasn't been judged by ear. Not done: Fedora and Flatpak packages. Reports are welcome; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the plan and [`docs/STATUS.md`](docs/STATUS.md) where things stand.
 
 ## License
 
