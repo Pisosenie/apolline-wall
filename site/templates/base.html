@@ -7,6 +7,8 @@
   <meta name="description" content="{% block about %}{{ config.description }}{% endblock about %}">
   <meta property="og:title" content="apolline-wall">
   <meta property="og:description" content="{{ config.description }}">
+  <meta property="og:image" content="{{ get_url(path='shots/library.jpg') }}">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#0c0b0d">
   <link rel="icon" href="{{ get_url(path='logo.svg') }}" type="image/svg+xml">
   <link rel="alternate" type="application/atom+xml" title="apolline-wall releases" href="{{ get_url(path='atom.xml', trailing_slash=false) }}">

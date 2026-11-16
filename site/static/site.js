@@ -24,7 +24,7 @@ if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: re
       }
     }
   }, { rootMargin: "0px 0px -8% 0px" });
-  for (const el of document.querySelectorAll(".home .block .heading, .home .kind, .home .tier, .home .split > *, .home .desk, .home .install-card, .home .release")) {
+  for (const el of document.querySelectorAll(".home .block .heading, .home .shots figure, .home .kind, .home .tier, .home .split > *, .home .desk, .home .install-card, .home .release")) {
     el.classList.add("reveal");
     shown.observe(el);
   }
