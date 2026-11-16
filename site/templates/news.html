@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block kind %}page{% endblock kind %}
+{% block at %}news{% endblock at %}
+{% block title %}What's new · apolline-wall{% endblock title %}
+{% block about %}{{ section.description }}{% endblock about %}
+{% block content %}
+<section class="wrap page-head">
+  <span class="eyebrow">Releases</span>
+  <h1>What's new</h1>
+  <p>{{ section.description }} Follow along with the <a href="{{ get_url(path='atom.xml', trailing_slash=false) }}">feed</a>, or let <code>apolline update</code> bring it under Apolline.</p>
+</section>
+<section class="wrap timeline">
+  {%- for page in section.pages %}
+  {{<release version={page.extra.version} date={page.date} link={page.permalink} content={page.content}/>}}
+  {%- endfor %}
+</section>
+{% endblock content %}

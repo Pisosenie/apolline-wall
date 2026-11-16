@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block kind %}home{% endblock kind %}
+{% block content %}
+{%- set news = get_section(path="news/_index.md") -%}
+{%- set latest = news.pages | first -%}
+
+<section class="hero live">
+  <canvas class="wall" data-shader="{{ get_url(path='hills.frag', trailing_slash=false) }}" aria-hidden="true"></canvas>
+  <div class="veil" aria-hidden="true"></div>
+  <div class="wrap hero-text">
+    <a class="pill" href="{{ latest.permalink | safe }}"><span class="dot"></span>{{ latest.extra.version }} is out<span class="muted">· what's new</span>{{<arrow/>}}</a>
+    <h1>Live wallpapers for <em>Linux</em>.</h1>
+    <p class="lede">Pictures, videos, Shadertoy shaders and Wallpaper Engine scenes on every monitor. Scenes are drawn natively by its own renderer, and nothing is spent while nothing shows.</p>
+    <div class="actions">
+      <a class="button primary" href="#install">Install</a>
+      <a class="button" href="{{ config.extra.repo }}">{{<github/>}} Source</a>
+    </div>
+  </div>
+  <div class="wrap now-playing">
+    <span class="state"><i></i><b data-state>Playing</b> <code>tests/shaders/hills.frag</code> from the repository, as it runs on a desktop</span>
+    <span class="accents" role="group" aria-label="Accent the shader is tinted with">
+      <span class="muted">iAccent</span>
+      {%- for accent in [["#ff6a3d", "Ember"], ["#86bdf0", "Sky"], ["#c084fc", "Violet"], ["#5dd39e", "Mint"]] %}
+      <button type="button" data-accent="{{ accent[0] }}" style="--swatch: {{ accent[0] }}" aria-label="{{ accent[1] }}"{% if loop.first %} aria-pressed="true"{% endif %}></button>
+      {%- endfor %}
+    </span>
+  </div>
+</section>
+
+<section class="wrap block" id="features">
+  <div class="heading">
+    <span class="eyebrow">What it plays</span>
+    <h2>Anything that can be a wallpaper.</h2>
+    <p>The way Wallpaper Engine does it on Windows, reading Wallpaper Engine's own Workshop items to do it. Each monitor gets its own wallpaper, fit, look and playlist, crossfaded, and follows the monitor across ports.</p>
+  </div>
+  <div class="kinds">
+    {%- set kinds = [
+      ["image", "Pictures", "Any common format. Nothing is drawn between changes and no timers run."],
+      ["video", "Videos", "mp4, webm, mkv, mov, gif, muted and looping through libmpv with hardware decoding."],
+      ["code", "Shaders", "Single-pass Shadertoy .frag and .glsl as they are, with the shell's accent as iAccent."],
+      ["layers", "Wallpaper Engine", "Videos and scenes from your Workshop subscriptions, in every Steam library."]
+    ] %}
+    {%- for kind in kinds %}
+    <article class="kind">
+      <span class="ico">{{<icon name={kind[0]}/>}}</span>
+      <h3>{{ kind[1] }}</h3>
+      <p>{{ kind[2] }}</p>
+    </article>
+    {%- endfor %}
+  </div>
+</section>
+
+<section class="wrap block split" id="scenes">
+  <div class="split-text">
+    <span class="eyebrow">Scenes, natively</span>
+    <h2>Its own renderer, not a Windows program.</h2>
+    <p>Workshop scenes are drawn by <a href="https://github.com/Pisosenie/apolline-scene">apolline-scene</a>, a clean-room renderer on OpenGL or GLES, in the same GL context as pictures, videos and shaders. So a scene gets the same crossfades, looks, pause and frame limits as everything else.</p>
+    <p>A scene that needs something not done yet is refused up front with the reason, never drawn with parts left out, and goes to linux-wallpaperengine if you have it.</p>
+  </div>
+  <div class="split-media">
+    <div class="stat-card">
+      <dl>
+        <div><dt>27 / 27</dt><dd>scenes that prepare in a real Workshop library draw, and match their own preview, on an RTX 4070 Ti</dd></div>
+        <div><dt>32</dt><dd>blend modes for image layers</dd></div>
+      </dl>
+      <ul class="chips">
+        {%- for thing in ["materials and their shaders", "multi-pass effects", "bloom", "particles", "turbulence", "control points", "rope trails", "puppet warp", "timelines", "text layers", "sprite sheets", "parallax", "camera shake", "time of day", "audio response", "the author's properties", "SceneScript, sandboxed"] %}
+        <li>{{ thing }}</li>
+        {%- endfor %}
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="block span-band" id="monitors">
+  <div class="wrap heading">
+    <span class="eyebrow">One scene, many monitors</span>
+    <h2>It runs once, however many screens show it.</h2>
+    <p>A moving wallpaper shown on several monitors runs once, into a canvas of its own shape, and each monitor shows its part. Particles, scripts and effects cost the same for one screen or three, and one decode feeds every monitor showing the same video.</p>
+  </div>
+  <div class="wrap desk" aria-label="One shader across three monitors">
+    <div class="desk-frame">
+      <canvas class="wall" data-shader="{{ get_url(path='hills.frag', trailing_slash=false) }}" aria-hidden="true"></canvas>
+      <svg class="bezels" viewBox="0 0 1200 420" preserveAspectRatio="none" aria-hidden="true">
+        <path fill-rule="evenodd" d="M0 0H1200V420H0Z M40 60H300V400H40Z M340 20H880V360H340Z M920 90H1160V300H920Z"/>
+        <rect x="40" y="60" width="260" height="340" rx="6"/>
+        <rect x="340" y="20" width="540" height="340" rx="6"/>
+        <rect x="920" y="90" width="240" height="210" rx="6"/>
+      </svg>
+    </div>
+    <dl class="numbers">
+      <div><dt>46% → 32%</dt><dd>GPU use for a scene on two monitors, once it ran once</dd></div>
+      <div><dt>−25%</dt><dd>CPU time on the same two monitors</dd></div>
+      <div><dt>1</dt><dd>video decode for every monitor showing it</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="wrap block split reverse" id="unseen">
+  <div class="split-text">
+    <span class="eyebrow">Free when unseen</span>
+    <h2>Covered, locked or asleep, it stops.</h2>
+    <p>A frame is drawn only when the compositor asks for one, so a wallpaper behind a fullscreen window costs nothing. The wallpaper at the top of this page does the same: scroll away and it pauses.</p>
+    <ul class="ticks">
+      <li>pauses on screen lock and before sleep</li>
+      <li>on battery: keep going, cap at 15 fps and half resolution, or pause</li>
+      <li>under Apolline, pauses for games and performance modes</li>
+      <li>a pause you made stays: unlocking never resumes it</li>
+    </ul>
+  </div>
+  <div class="meter">
+    <span class="eyebrow">A 1080p clip behind a fullscreen window</span>
+    <div class="bar"><span style="width: 100%"></span><b>about 7 cores</b><em>drawing every frame</em></div>
+    <div class="bar low"><span style="width: 13%"></span><b>under 1 core</b><em>only when asked</em></div>
+    <p class="small">Measured in a test VM.</p>
+  </div>
+</section>
+
+<section class="wrap block" id="desktops">
+  <div class="heading">
+    <span class="eyebrow">Where it runs</span>
+    <h2>Wayland, X11, and Plasma's own desktop.</h2>
+    <p>A layer-shell surface per monitor, drawn with GLES at each monitor's physical resolution. Plasma gets a wallpaper plugin under its icons and widgets, GNOME a Shell extension, X11 a desktop window per monitor. Here is honestly where it has been run.</p>
+  </div>
+  <div class="tiers">
+    <div class="tier ran">
+      <h3><i></i>Run and checked</h3>
+      <ul><li>niri, on real hardware</li><li>sway</li><li>labwc</li><li>X11 with openbox</li><li>X11 with i3</li></ul>
+    </div>
+    <div class="tier should">
+      <h3><i></i>Layer-shell, should just work</h3>
+      <ul><li>Hyprland</li><li>river</li><li>Wayfire</li><li>COSMIC</li></ul>
+    </div>
+    <div class="tier written">
+      <h3><i></i>Written, not run yet</h3>
+      <ul><li>KDE Plasma 6, through PipeWire</li><li>GNOME 45–49</li><li>AMD and Intel GPUs on real scenes</li></ul>
+      <p>On one of these? <a href="{{ config.extra.repo }}/issues">Tell how it went</a>, the app writes a report in one click.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap block" id="app">
+  <div class="heading">
+    <span class="eyebrow">The Wallpapers app</span>
+    <h2>Browse, pick, tune, on any desktop.</h2>
+    <p><code>apolline-wallpapers</code> is a window in Apolline's look. It talks to the daemon over the same socket as the CLI and starts it if it isn't running.</p>
+  </div>
+  <div class="kinds six">
+    {%- set parts = [
+      ["folder", "Library", "Your wallpaper folders and everything Wallpaper Engine has on this machine, from every Steam library, native or Flatpak."],
+      ["layers", "Steam Workshop", "Browsed without an account. Subscribe in Steam, or download through steamcmd without the client."],
+      ["monitor", "Inspector", "Every monitor or one; fill, whole, or whole with blurred edges; brightness, contrast, speed as a live draft."],
+      ["music", "Scene properties", "The author's own checkboxes, sliders, colors and presets, and scenes that move to what's playing."],
+      ["pause", "Rotation and tray", "Rotate a filtered set or a folder every few minutes; pause, next and random from the tray."],
+      ["shield", "Safe with anyone's files", "Local files only for videos, size limits everywhere, scene scripts with no filesystem and no network."]
+    ] %}
+    {%- for part in parts %}
+    <article class="kind">
+      <span class="ico">{{<icon name={part[0]}/>}}</span>
+      <h3>{{ part[1] }}</h3>
+      <p>{{ part[2] }}</p>
+    </article>
+    {%- endfor %}
+  </div>
+</section>
+
+<section class="wrap block install" id="install">
+  <div class="install-card">
+    <div class="sun small" aria-hidden="true"></div>
+    <span class="eyebrow">Install</span>
+    <h2>Arch first, a .deb for the rest.</h2>
+    <p>On Arch, build the package:</p>
+    {{<command text="git clone https://github.com/Pisosenie/apolline-wall && cd apolline-wall/packaging/arch && makepkg -si"/>}}
+    <p>Stop whatever draws your wallpaper now, start the daemon, and set something:</p>
+    {{<command text="systemctl --user enable --now apolline-wall.service && apolline-wall set ~/Videos/rain.mp4"/>}}
+    <p class="small">Debian 12 and Ubuntu 22.04 or newer: the <code>.deb</code> on each <a href="{{ config.extra.repo }}/releases">release</a>. Under <a href="https://pisosenie.github.io/apolline/">Apolline</a> there's nothing to start: pick a live wallpaper in Settings → Appearance. The rest is in <a href="{{ get_url(path='@/docs/_index.md') }}">the docs</a>.</p>
+  </div>
+</section>
+
+<section class="wrap block" id="latest">
+  <div class="heading row">
+    <div>
+      <span class="eyebrow">What's new</span>
+      <h2>apolline-wall {{ latest.extra.version }}</h2>
+    </div>
+    <a class="button" href="{{ get_url(path='@/news/_index.md') }}">Every release {{<arrow/>}}</a>
+  </div>
+  {%- set previous = news.pages[1:2] | first %}
+  <div class="latest">
+    {{<release version={latest.extra.version} date={latest.date} link={latest.permalink} content={latest.content}/>}}
+    {%- if previous %}{{<release version={previous.extra.version} date={previous.date} link={previous.permalink} content={previous.content}/>}}{% endif %}
+  </div>
+</section>
+{% endblock content %}

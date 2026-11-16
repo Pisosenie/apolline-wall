@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}apolline-wall · live wallpapers for Linux{% endblock title %}</title>
+  <meta name="description" content="{% block about %}{{ config.description }}{% endblock about %}">
+  <meta property="og:title" content="apolline-wall">
+  <meta property="og:description" content="{{ config.description }}">
+  <meta name="theme-color" content="#0c0b0d">
+  <link rel="icon" href="{{ get_url(path='logo.svg') }}" type="image/svg+xml">
+  <link rel="alternate" type="application/atom+xml" title="apolline-wall releases" href="{{ get_url(path='atom.xml', trailing_slash=false) }}">
+  <link rel="preload" href="{{ get_url(path='fonts/Geist-Regular.ttf') }}" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="{{ get_url(path='site.css', cachebust=true) }}">
+</head>
+<body class="{% block kind %}{% endblock kind %}" data-at="{% block at %}{% endblock at %}">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="nav">
+    <div class="wrap nav-row">
+      <a class="brand" href="{{ get_url(path='/', trailing_slash=true) }}"><img src="{{ get_url(path='logo.svg') }}" alt="" width="28" height="28">apolline-wall</a>
+      <nav aria-label="Site">
+        <a href="{{ get_url(path='/', trailing_slash=true) }}#features" class="hide-sm">Features</a>
+        <a href="{{ get_url(path='/', trailing_slash=true) }}#desktops" class="hide-sm">Desktops</a>
+        <a href="{{ get_url(path='@/news/_index.md') }}" data-nav="news">What's new</a>
+        <a href="{{ get_url(path='@/docs/_index.md') }}" data-nav="docs">Docs</a>
+        <a class="gh" href="{{ config.extra.repo }}" aria-label="apolline-wall on GitHub">{{<github/>}}<span class="hide-sm">GitHub</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+  {%- block content %}{% endblock content %}
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-row">
+      <div class="foot-brand">
+        <img src="{{ get_url(path='logo.svg') }}" alt="" width="32" height="32">
+        <div>
+          <strong>apolline-wall</strong>
+          <span>Live wallpapers for Linux, from the <a href="https://pisosenie.github.io/apolline/">Apolline</a> family. MIT or Apache-2.0.</span>
+        </div>
+      </div>
+      <nav aria-label="More">
+        <a href="{{ config.extra.repo }}">Source</a>
+        <a href="{{ config.extra.repo }}/issues">Issues</a>
+        <a href="{{ config.extra.repo }}/releases">Releases</a>
+        <a href="{{ get_url(path='atom.xml', trailing_slash=false) }}">{{<rss/>}} Feed</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="{{ get_url(path='site.js', cachebust=true) }}" defer></script>
+</body>
+</html>

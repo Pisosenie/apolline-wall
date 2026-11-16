@@ -1,0 +1,17 @@
+base_url = "https://pisosenie.github.io/apolline-wall"
+title = "apolline-wall"
+description = "Live wallpapers for Linux: pictures, videos, shaders and Wallpaper Engine scenes, on every monitor."
+default_language = "en"
+generate_feeds = true
+feed_filenames = ["atom.xml"]
+author = "apolline-wall"
+skip_content_templating = ["docs/_index.md", "news/*.md"]
+
+[markdown]
+insert_anchor_links = "heading"
+
+[markdown.highlighting]
+theme = "catppuccin-mocha"
+
+[extra]
+repo = "https://github.com/Pisosenie/apolline-wall"

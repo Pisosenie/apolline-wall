@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block kind %}page{% endblock kind %}
+{% block at %}news{% endblock at %}
+{% block title %}{{ page.title }}{% endblock title %}
+{% block about %}What changed in {{ page.title }}.{% endblock about %}
+{% block content %}
+<section class="wrap page-head">
+  <a class="back" href="{{ get_url(path='@/news/_index.md') }}">← Every release</a>
+  <h1>{{ page.title }}</h1>
+  <p><time datetime="{{ page.date }}">{{ page.date | date(format="%-d %B %Y") }}</time> · <a href="{{ config.extra.repo }}/releases">releases on GitHub</a></p>
+</section>
+<section class="wrap narrow">
+  <div class="prose">{{ page.content | safe }}</div>
+  <nav class="pager">
+    {%- if page.lower %}<a href="{{ page.lower.permalink | safe }}">← {{ page.lower.title }}</a>{% else %}<span></span>{% endif %}
+    {%- if page.higher %}<a href="{{ page.higher.permalink | safe }}">{{ page.higher.title }} →</a>{% endif %}
+  </nav>
+</section>
+{% endblock content %}

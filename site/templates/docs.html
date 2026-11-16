@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block kind %}page docs-page{% endblock kind %}
+{% block at %}docs{% endblock at %}
+{% block title %}Docs · apolline-wall{% endblock title %}
+{% block about %}{{ section.description }}{% endblock about %}
+{% block content %}
+<div class="wrap docs">
+  <aside class="toc" aria-label="On this page">
+    <details open>
+      <summary>On this page</summary>
+      <ol>
+        {%- for h in section.toc %}
+        <li><a href="#{{ h.id }}">{{ h.title }}</a>
+          {%- if h.children %}<ol>{% for c in h.children %}<li><a href="#{{ c.id }}">{{ c.title }}</a></li>{% endfor %}</ol>{% endif %}
+        </li>
+        {%- endfor %}
+      </ol>
+    </details>
+  </aside>
+  <article>
+    <header class="page-head flush">
+      <span class="eyebrow">Docs</span>
+      <h1>How to, and everything else</h1>
+    </header>
+    <div class="prose">{{ section.content | safe }}</div>
+    <p class="edit"><a href="{{ config.extra.repo }}/edit/main/README.md">Edit this page on GitHub</a></p>
+  </article>
+</div>
+{% endblock content %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block kind %}page{% endblock kind %}
+{% block at %}{% endblock at %}
+{% block title %}Nothing here · apolline-wall{% endblock title %}
+{% block about %}{{ config.description }}{% endblock about %}
+{% block content %}
+<section class="wrap page-head lost">
+  <div class="sun small" aria-hidden="true"></div>
+  <h1>Nothing here</h1>
+  <p>The sun set on this page. <a href="{{ get_url(path='/', trailing_slash=true) }}">Back home</a>.</p>
+</section>
+{% endblock content %}
