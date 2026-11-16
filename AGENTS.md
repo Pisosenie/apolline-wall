@@ -20,6 +20,7 @@ The idea comes from [WallpaperMachine](https://github.com/MMFoundation/Wallpaper
 - `gnome/apolline-wall@pisosenie.github.io/`: the GNOME Shell extension, GNOME 45–49, ES modules.
 - `plasma/io.github.pisosenie.apolline-wall/`: the Plasma 6 wallpaper plugin, QML only: KPipeWire's `PipeWireSourceItem` plays the stream, Plasma5Support's executable data source runs `apolline-wall feed`.
 - `packaging/`: `arch/PKGBUILD` (`apolline-wall-git`), the systemd user unit, the desktop file.
+- `site/`: the website, Zola 0.23 (Tera 2: components, not macros), published to GitHub Pages from `main` by `.github/workflows/site.yml`. `site/prepare.py` makes the releases from `CHANGELOG.md`, the docs from the README from `## How to` to `## License`, and brings the app's fonts and `tests/shaders/hills.frag`, which the page plays in WebGL. Locally: `python3 site/prepare.py && zola --root site serve`.
 - `tests/`: pictures and a shader for `tools/headless.sh`, and stand-ins for programs we drive: `tests/scenes/stand-in.sh` for linux-wallpaperengine and `tests/steamcmd/stand-in.sh` for steamcmd (a made-up account `stand_in`, password `stand-in-password`, Steam Guard code `QX7RM`).
 
 ## steamcmd and Steam accounts

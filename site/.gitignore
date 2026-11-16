@@ -1,0 +1,6 @@
+/public/
+/content/news/*.md
+!/content/news/_index.md
+/content/docs/
+/static/fonts/
+/static/hills.frag
